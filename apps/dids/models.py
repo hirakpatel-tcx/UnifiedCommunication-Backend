@@ -79,6 +79,12 @@ class DID(TimestampedModel):
             "Stored as provided by FreeSWITCH."
         ),
     )
+    name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Human-readable name or label for this DID (e.g. 'Main Line', 'Support').",
+    )
 
     # ------------------------------------------------------------------
     # Capabilities — calling and messaging ONLY.

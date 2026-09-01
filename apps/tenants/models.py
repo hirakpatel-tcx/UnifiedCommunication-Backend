@@ -153,6 +153,15 @@ class Tenant(TimestampedModel):
             "Example: {\"calling\": true, \"messaging\": true, \"fax\": false, \"voicemail\": true}"
         ),
     )
+    sip_domain = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text=(
+            "Default SIP domain / registrar host for all users in this tenant "
+            "(e.g. 'sip.example.com' or 'pbx.tenant.com')."
+        ),
+    )
     is_active = models.BooleanField(
         default=True,
         db_index=True,

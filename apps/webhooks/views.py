@@ -115,14 +115,19 @@ class FreeSwitchWebhookView(APIView):
                 encrypted_key = SecretService.encrypt(raw_api_key)
                 code = tenant_code or "TENANT"
                 name = payload.get("tenant_name") or f"{code} Tenant"
+                domain = str(payload.get("sip_domain") or payload.get("domain") or "").strip()
+                defaults_dict = {
+                    "tenant_code": code,
+                    "tenant_name": name,
+                    "encrypted_api_key": encrypted_key,
+                    "is_active": True,
+                }
+                if domain:
+                    defaults_dict["sip_domain"] = domain
+
                 tenant, created = Tenant.objects.update_or_create(
                     freeswitch_tenant_uuid=tenant_id,
-                    defaults={
-                        "tenant_code": code,
-                        "tenant_name": name,
-                        "encrypted_api_key": encrypted_key,
-                        "is_active": True,
-                    },
+                    defaults=defaults_dict,
                 )
                 logger.info(
                     "Provisioned FreeSWITCH API key for tenant %s (created=%s)",
@@ -143,7 +148,6 @@ class FreeSwitchWebhookView(APIView):
                 raw_num = payload.get("extension_number") or payload.get("phone")
                 raw_sip_pw = payload.get("sip_password") or payload.get("password")
                 raw_sip_user = payload.get("sip_username")
-                raw_server = payload.get("sip_server") or payload.get("server")
                 raw_transport = payload.get("transport_type") or payload.get("transport")
 
                 if ext:
@@ -152,8 +156,6 @@ class FreeSwitchWebhookView(APIView):
                         ext.extension_number = str(raw_num)[:20]
                     if raw_sip_user:
                         ext.sip_username = str(raw_sip_user)
-                    if raw_server:
-                        ext.sip_server = str(raw_server)
                     if raw_transport:
                         ext.transport_type = str(raw_transport)
                     if raw_sip_pw:
@@ -164,7 +166,6 @@ class FreeSwitchWebhookView(APIView):
                     # New extension
                     ext_num = str(raw_num)[:20] if raw_num else f"ext-{object_id[:8]}"
                     sip_user = raw_sip_user or f"{ext_num}-{tenant.tenant_code}"
-                    sip_srv = raw_server or "sip.example.com"
                     transport = raw_transport or "TLS"
                     enc_pw = SecretService.encrypt(raw_sip_pw) if raw_sip_pw else ""
 
@@ -173,7 +174,6 @@ class FreeSwitchWebhookView(APIView):
                         freeswitch_object_id=object_id,
                         extension_number=ext_num,
                         sip_username=sip_user,
-                        sip_server=sip_srv,
                         transport_type=transport,
                         encrypted_sip_password=enc_pw,
                     )
@@ -195,27 +195,32 @@ class FreeSwitchWebhookView(APIView):
             tenant = resolve_or_create_tenant(auto_create=True)
             if tenant:
                 did = DID.objects.filter(tenant=tenant, freeswitch_object_id=object_id).first()
-                raw_num = payload.get("number") or payload.get("phone") or payload.get("did")
+                raw_num = payload.get("did_number") or payload.get("number") or payload.get("phone") or payload.get("did")
+                raw_name = payload.get("did_name") or payload.get("name")
 
                 if did:
                     if raw_num:
                         did.number = str(raw_num)[:20]
+                    if raw_name is not None:
+                        did.name = str(raw_name)[:255]
                     if "calling_enabled" in payload:
                         did.calling_enabled = bool(payload["calling_enabled"])
                     if "messaging_enabled" in payload:
                         did.messaging_enabled = bool(payload["messaging_enabled"])
                     did.save()
-                    logger.info("DID %s updated for tenant %s", did.number, tenant.tenant_code)
+                    logger.info("DID %s (%s) updated for tenant %s", did.number, did.name, tenant.tenant_code)
                 else:
                     did_num = str(raw_num)[:20] if raw_num else f"did-{object_id[:8]}"
+                    did_name = str(raw_name)[:255] if raw_name else ""
                     did = DID.objects.create(
                         tenant=tenant,
                         freeswitch_object_id=object_id,
                         number=did_num,
-                        calling_enabled=payload.get("calling_enabled", False),
-                        messaging_enabled=payload.get("messaging_enabled", False),
+                        name=did_name,
+                        calling_enabled=payload.get("calling_enabled", True),
+                        messaging_enabled=payload.get("messaging_enabled", True),
                     )
-                    logger.info("DID %s created for tenant %s", did.number, tenant.tenant_code)
+                    logger.info("DID %s (%s) created for tenant %s", did.number, did.name, tenant.tenant_code)
 
         elif event_type == "did.deleted" and object_id:
             tenant = resolve_or_create_tenant(auto_create=False)

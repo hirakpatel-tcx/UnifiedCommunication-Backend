@@ -90,9 +90,9 @@ UnifiedCommunication-Backend/
 
 | Model | Table | Responsibility |
 |---|---|---|
-| **`Tenant`** | `tenants` | Top-level tenant. Stores stable FreeSWITCH tenant UUID, per-tenant encrypted API key, and enabled feature flags (`calling`, `messaging`, `fax`, `voicemail`). |
-| **`User`** | `users` | Globally unique normalized email, application password, role (`superadmin`, `admin`, `user`), and JSON routing lists: `fax_boxes` and `voicemail_boxes`. |
-| **`Extension`** | `extensions` | Telephony SIP extension (`101`), `sip_server`, `transport_type` (`UDP`, `TCP`, `TLS`, `DTLS`), and encrypted SIP password. 0..1 relationship to `User`. |
+| **`Tenant`** | `tenants` | Top-level tenant. Stores stable FreeSWITCH tenant UUID, default `sip_domain`, per-tenant encrypted API key, and enabled feature flags (`calling`, `messaging`, `fax`, `voicemail`). |
+| **`User`** | `users` | Globally unique normalized email, application password, optional per-user `sip_domain` override, role (`superadmin`, `admin`, `user`), and JSON routing lists: `fax_boxes` and `voicemail_boxes`. |
+| **`Extension`** | `extensions` | Telephony SIP extension (`101`), `transport_type` (`UDP`, `TCP`, `TLS`, `DTLS`), and encrypted SIP password. 0..1 relationship to `User`. |
 | **`DID`** | `dids` | Phone numbers in E.164 format. Owned by the Tenant; supports `calling_enabled` and `messaging_enabled`. |
 | **`UserDID`** | `user_dids` | Grants user access to a DID. Allows multiple users to share numbers while ownership remains strictly with the Tenant. |
 | **`WebhookLog`** | `webhook_logs` | Temporary 48-hour event log for inbound FreeSWITCH webhooks. Sanitized payloads, indexed `expires_at`. |

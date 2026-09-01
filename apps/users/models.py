@@ -134,6 +134,19 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
 
     # ------------------------------------------------------------------
+    # SIP Domain (per-user override; falls back to tenant.sip_domain)
+    # ------------------------------------------------------------------
+    sip_domain = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text=(
+            "Custom SIP domain / registrar host for this user. "
+            "If blank, automatically inherits the tenant's default sip_domain."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # FaxBox assignment (JSON)
     # Exact structure:
     #   [{"fax_uuid": "...", "fax_caller_id_name": "...", "fax_caller_id_number": "..."}]
@@ -223,6 +236,18 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def is_admin(self) -> bool:
         return self.role == UserRole.ADMIN
+
+    @property
+    def effective_sip_domain(self) -> str:
+        """
+        Returns the user's custom sip_domain if configured,
+        otherwise falls back to the tenant's default sip_domain.
+        """
+        if self.sip_domain:
+            return self.sip_domain
+        if self.tenant and self.tenant.sip_domain:
+            return self.tenant.sip_domain
+        return ""
 
     # ------------------------------------------------------------------
     # FaxBox helpers (thin — business logic belongs in FaxBoxService)

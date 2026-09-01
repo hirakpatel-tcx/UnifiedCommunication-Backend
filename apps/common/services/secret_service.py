@@ -12,8 +12,11 @@ SECURITY INVARIANTS:
 
 import base64
 import logging
+# pyrefly: ignore [missing-import]
 from cryptography.fernet import Fernet, InvalidToken
+# pyrefly: ignore [missing-import]
 from django.conf import settings
+# pyrefly: ignore [missing-import]
 from django.core.exceptions import ImproperlyConfigured
 
 logger = logging.getLogger(__name__)
@@ -38,8 +41,12 @@ class SecretService:
                 raise ImproperlyConfigured("ENCRYPTION_KEY must be configured in production.")
 
         try:
-            # Fernet requires a 32-byte URL-safe base64-encoded key
+            # Fernet requires a 32-byte URL-safe base64-encoded key (44 characters with padding)
             if isinstance(key, str):
+                key = key.strip()
+                missing_padding = len(key) % 4
+                if missing_padding:
+                    key += "=" * (4 - missing_padding)
                 key = key.encode("utf-8")
             cls._fernet = Fernet(key)
         except Exception as exc:

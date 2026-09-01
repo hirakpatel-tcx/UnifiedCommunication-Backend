@@ -22,6 +22,7 @@ class TenantSerializer(serializers.ModelSerializer):
             "freeswitch_tenant_uuid",
             "tenant_code",
             "tenant_name",
+            "sip_domain",
             "api_key",
             "features",
             "is_active",

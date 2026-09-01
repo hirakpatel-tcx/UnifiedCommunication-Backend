@@ -93,17 +93,31 @@ Authenticates a user with email and application password. Returns JWT access/ref
   "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "user": {
     "id": "dc151ca8-2c62-4f48-a3f0-cbb58c2e8aea",
-    "email": "root@tcx.com",
-    "role": "superadmin",
+    "email": "agent@tcx.com",
+    "role": "user",
     "is_active": true,
-    "tenant": null,
-    "features": {
-      "calling": false,
-      "messaging": false,
-      "fax": false,
-      "voicemail": false
+    "tenant": {
+      "id": "faa447b0-f40c-4bcf-b651-4131f6634f27",
+      "freeswitch_tenant_uuid": "7fae0a2e-4b21-4322-81fa-223456789abc",
+      "tenant_code": "TCX",
+      "tenant_name": "TCX Communications",
+      "sip_domain": "sip.example.com"
     },
-    "extension": null,
+    "features": {
+      "calling": true,
+      "messaging": true,
+      "fax": false,
+      "voicemail": true
+    },
+    "extension": {
+      "id": "3163c924-e0fd-458e-8a05-912889f428f6",
+      "extension_number": "101",
+      "sip_username": "101-TCX",
+      "sip_password": "PlaintextSipPassword",
+      "sip_domain": "sip.example.com",
+      "transport_type": "TLS"
+    },
+    "dids": [],
     "fax_boxes": [],
     "voicemail_boxes": [],
     "created_at": "2026-08-28T20:12:27.756953Z"
@@ -202,7 +216,6 @@ Lists extensions for softphone assignment.
       "freeswitch_object_id": "fs-ext-101-uuid",
       "extension_number": "101",
       "sip_username": "101-TCX",
-      "sip_server": "sip.example.com",
       "transport_type": "TLS",
       "assigned_user_id": "18f2f458-bf87-43c3-888a-2115f5d8e785",
       "assigned_user_email": "user@example.com",
@@ -243,6 +256,9 @@ Lists phone numbers (DIDs) with tenant scoping, capabilities, and assigned users
       "tenant_name": "TCX Communications",
       "freeswitch_object_id": "fs-did-8321234567-uuid",
       "number": "+18321234567",
+      "name": "Main Line",
+      "did_number": "+18321234567",
+      "did_name": "Main Line",
       "calling_enabled": true,
       "messaging_enabled": true,
       "assigned_users_count": 1,
@@ -315,14 +331,14 @@ Since Extensions and DIDs are already provisioned into the database via FreeSWIT
     "id": "faa447b0-f40c-4bcf-b651-4131f6634f27",
     "freeswitch_tenant_uuid": "7fae0a2e-4b21-4322-81fa-223456789abc",
     "tenant_code": "TCX",
-    "tenant_name": "TCX Communications"
+    "tenant_name": "TCX Communications",
+    "sip_domain": "sip.example.com"
   },
   "features": { ... },
   "extension": {
     "id": "3163c924-e0fd-458e-8a05-912889f428f6",
     "extension_number": "101",
     "sip_username": "101-TCX",
-    "sip_server": "sip.example.com",
     "transport_type": "TLS"
   },
   "dids": [
@@ -354,6 +370,7 @@ Atomically updates user attributes and/or updates/replaces resource assignments.
 ```json
 {
   "role": "admin",
+  "sip_domain": "custom.sip.example.com",
   "extension_id": null,
   "did_ids": ["+18321234567"],
   "voicemail_boxes": [101, 2002]
@@ -388,7 +405,7 @@ Decrypts in-memory and returns SIP credentials for softphone client registration
   "extension_number": "101",
   "sip_username": "101-TCX",
   "sip_password": "PlaintextSipPasswordDecryptedInMemory",
-  "sip_server": "sip.example.com",
+  "sip_domain": "sip.example.com",
   "transport_type": "TLS"
 }
 ```
@@ -508,7 +525,8 @@ Receives FreeSWITCH notifications and synchronizes database state.
 3. **`extension.deleted`**:
    - Unlinks from assigned user (`on_delete=SET_NULL`) and deletes local extension.
 4. **`did.created` & `did.updated`**:
-   - Synchronizes DID number, `calling_enabled`, and `messaging_enabled`.
+   - Supports `did_number` / `number` and `did_name` / `name`.
+   - Synchronizes DID number, name, `calling_enabled`, and `messaging_enabled`.
 5. **`did.deleted`**:
    - Cleans up DID and associated `UserDID` assignments.
 6. **`voicemail.received` & `fax.received`**:

@@ -12,6 +12,7 @@ class DIDUserInline(admin.TabularInline):
 class DIDAdmin(admin.ModelAdmin):
     list_display = (
         "number",
+        "name",
         "tenant",
         "calling_enabled",
         "messaging_enabled",
@@ -19,7 +20,7 @@ class DIDAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("tenant", "calling_enabled", "messaging_enabled")
-    search_fields = ("number", "freeswitch_object_id")
+    search_fields = ("number", "name", "freeswitch_object_id")
     inlines = [DIDUserInline]
 
 

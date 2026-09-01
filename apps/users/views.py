@@ -184,13 +184,15 @@ class SipCredentialsView(APIView):
             )
 
         decrypted_password = SecretService.decrypt(extension.encrypted_sip_password)
+        effective_domain = target_user.effective_sip_domain
 
         return Response(
             {
                 "extension_number": extension.extension_number,
                 "sip_username": extension.sip_username,
                 "sip_password": decrypted_password,
-                "sip_server": extension.sip_server,
+                "sip_domain": effective_domain,
+                
                 "transport_type": extension.transport_type,
             },
             status=status.HTTP_200_OK,

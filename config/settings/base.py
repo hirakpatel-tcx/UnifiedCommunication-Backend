@@ -52,6 +52,7 @@ DJANGO_APPS = [
 ]
 
 THIRD_PARTY_APPS = [
+    "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
@@ -99,6 +100,7 @@ AUTHENTICATION_BACKENDS = [
 # ---------------------------------------------------------------------------
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -274,6 +276,30 @@ ENCRYPTION_KEY = env("ENCRYPTION_KEY")
 FREESWITCH_CLIENT_API_BASE_URL = env("FREESWITCH_CLIENT_API_BASE_URL", default="https://pbx.yourdomain.com/api/v1/client")
 FREESWITCH_MASTER_KEY = env("FREESWITCH_MASTER_KEY", default="")
 FREESWITCH_API_TIMEOUT_SECONDS = env.float("FREESWITCH_API_TIMEOUT_SECONDS", default=30.0)
+
+# ---------------------------------------------------------------------------
+# CORS (Cross-Origin Resource Sharing)
+# ---------------------------------------------------------------------------
+CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL_ORIGINS", default=DEBUG)
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+]
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "x-tenant-id",
+]
 
 # ---------------------------------------------------------------------------
 # Logging

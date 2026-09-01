@@ -24,7 +24,6 @@ class ExtensionSerializer(serializers.ModelSerializer):
             "freeswitch_object_id",
             "extension_number",
             "sip_username",
-            "sip_server",
             "transport_type",
             "assigned_user_id",
             "assigned_user_email",

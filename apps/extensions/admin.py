@@ -9,7 +9,6 @@ class ExtensionAdmin(admin.ModelAdmin):
         "tenant",
         "user",
         "sip_username",
-        "sip_server",
         "transport_type",
         "freeswitch_object_id",
         "created_at",

@@ -18,6 +18,8 @@ class DIDSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source="tenant.tenant_name", read_only=True)
     assigned_users = AssignedUserSummarySerializer(source="user_dids", many=True, read_only=True)
     assigned_users_count = serializers.IntegerField(source="user_dids.count", read_only=True)
+    did_name = serializers.CharField(source="name", read_only=True)
+    did_number = serializers.CharField(source="number", read_only=True)
 
     class Meta:
         model = DID
@@ -28,6 +30,8 @@ class DIDSerializer(serializers.ModelSerializer):
             "tenant_name",
             "freeswitch_object_id",
             "number",
+            "did_number",
+            "did_name",
             "calling_enabled",
             "messaging_enabled",
             "assigned_users_count",

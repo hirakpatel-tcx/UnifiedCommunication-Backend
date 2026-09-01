@@ -12,8 +12,8 @@ Design decisions:
   It is NEVER the same as the application password.
   Decryption happens only in-memory via SecretService.decrypt()
   for authorized SIP credential retrieval.
-- sip_server and transport_type are required so the client
-  can construct full SIP registration parameters.
+- transport_type is stored on Extension; SIP domain is managed
+  on Tenant (default) and User (optional override).
 - freeswitch_object_id is the stable FreeSWITCH reference for this extension.
   It is unique within a tenant (same object_id cannot appear twice
   in the same tenant — but different tenants can have the same object_id).
@@ -112,16 +112,8 @@ class Extension(TimestampedModel):
     )
 
     # ------------------------------------------------------------------
-    # SIP connection parameters (new — required for client registration)
+    # SIP transport parameters
     # ------------------------------------------------------------------
-    sip_server = models.CharField(
-        max_length=255,
-        help_text=(
-            "SIP registrar / proxy hostname or IP address "
-            "(e.g. 'sip.example.com' or '192.168.1.1'). "
-            "Required for SIP client registration."
-        ),
-    )
     transport_type = models.CharField(
         max_length=10,
         choices=TransportType.choices,

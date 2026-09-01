@@ -11,6 +11,7 @@ from django.db.models import Q
 from rest_framework import serializers
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from apps.common.services.secret_service import SecretService
 from apps.dids.models import DID, UserDID
 from apps.extensions.models import Extension
 from apps.tenants.models import Tenant
@@ -23,26 +24,50 @@ from apps.users.validators import validate_fax_boxes, validate_voicemail_boxes
 # ---------------------------------------------------------------------------
 
 class ExtensionSummarySerializer(serializers.ModelSerializer):
+    sip_password = serializers.SerializerMethodField()
+    sip_domain = serializers.SerializerMethodField()
+
     class Meta:
         model = Extension
         fields = [
             "id",
             "extension_number",
             "sip_username",
-            "sip_server",
+            "sip_password",
+            "sip_domain",
             "transport_type",
         ]
 
+    def get_sip_password(self, obj) -> str:
+        if getattr(obj, "encrypted_sip_password", None):
+            try:
+                return SecretService.decrypt(obj.encrypted_sip_password)
+            except Exception:
+                return ""
+        return ""
+
+    def get_sip_domain(self, obj) -> str:
+        user = getattr(obj, "user", None)
+        if user:
+            return user.effective_sip_domain
+        tenant = getattr(obj, "tenant", None)
+        if tenant and getattr(tenant, "sip_domain", None):
+            return tenant.sip_domain
+        return ""
+    
 
 class UserDIDSummarySerializer(serializers.ModelSerializer):
     id = serializers.UUIDField(source="did.id")
     number = serializers.CharField(source="did.number")
+    name = serializers.CharField(source="did.name", allow_blank=True, default="")
+    did_name = serializers.CharField(source="did.name", allow_blank=True, default="")
+    did_number = serializers.CharField(source="did.number", allow_blank=True, default="")
     calling_enabled = serializers.BooleanField(source="did.calling_enabled")
     messaging_enabled = serializers.BooleanField(source="did.messaging_enabled")
 
     class Meta:
         model = UserDID
-        fields = ["id", "number", "calling_enabled", "messaging_enabled"]
+        fields = ["id", "number", "name", "did_number", "did_name", "calling_enabled", "messaging_enabled"]
 
 
 class TenantSummarySerializer(serializers.ModelSerializer):
@@ -53,6 +78,7 @@ class TenantSummarySerializer(serializers.ModelSerializer):
             "freeswitch_tenant_uuid",
             "tenant_code",
             "tenant_name",
+            "sip_domain",
         ]
 
 
@@ -101,8 +127,13 @@ class LoginSerializer(serializers.Serializer):
         email = attrs.get("email", "").strip().lower()
         password = attrs.get("password")
 
-        # 1. Check if user exists
-        user = User.objects.select_related("tenant", "extension").filter(email=email).first()
+        # 1. Check if user exists (with eager loading of tenant, extension, and user_dids)
+        user = (
+            User.objects.select_related("tenant", "extension")
+            .prefetch_related("user_dids__did")
+            .filter(email=email)
+            .first()
+        )
         if not user:
             raise serializers.ValidationError(
                 {"detail": "No account with this email found."},
@@ -184,6 +215,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
     """
     password = serializers.CharField(write_only=True, required=False, style={"input_type": "password"})
     tenant_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    sip_domain = serializers.CharField(required=False, allow_blank=True, default="")
     extension_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     did_ids = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
     fax_boxes = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
@@ -197,6 +229,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "password",
             "role",
             "tenant_id",
+            "sip_domain",
             "is_active",
             "extension_id",
             "did_ids",

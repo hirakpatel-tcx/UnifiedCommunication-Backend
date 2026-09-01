@@ -9,7 +9,7 @@ from apps.dids.models import UserDID
 class ExtensionInline(admin.StackedInline):
     model = Extension
     extra = 0
-    fields = ("extension_number", "sip_username", "sip_server", "transport_type", "freeswitch_object_id")
+    fields = ("extension_number", "sip_username", "transport_type", "freeswitch_object_id")
     readonly_fields = ("freeswitch_object_id",)
 
 
@@ -21,12 +21,12 @@ class UserDIDInline(admin.TabularInline):
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ("email", "tenant", "role", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
+    list_display = ("email", "tenant", "role", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
     list_filter = ("role", "is_staff", "is_superuser", "is_active", "tenant")
     inlines = [ExtensionInline, UserDIDInline]
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Tenant & Role", {"fields": ("tenant", "role")}),
+        ("Tenant & Role", {"fields": ("tenant", "role", "sip_domain")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Telephony Resources", {"fields": ("fax_boxes", "voicemail_boxes")}),
         ("Important dates", {"fields": ("last_login",)}),
@@ -36,7 +36,7 @@ class UserAdmin(BaseUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("email", "password", "tenant", "role", "is_staff", "is_superuser", "is_active"),
+                "fields": ("email", "password", "tenant", "role", "sip_domain", "is_staff", "is_superuser", "is_active"),
             },
         ),
     )

@@ -46,3 +46,4 @@ cryptography>=43.0,<45.0
 # ──────────────────────────────────────────────────────────────────────────────
 django-environ>=0.11,<1.0          # .env file loading
 django-filter>=24.0,<25.0          # DRF filter backends
+django-cors-headers>=4.3,<5.0      # Cross-Origin Resource Sharing (CORS) headers
