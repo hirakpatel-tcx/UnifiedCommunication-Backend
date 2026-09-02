@@ -69,7 +69,7 @@ class FreeSwitchWebhookView(APIView):
             )
 
         event_type = payload.get("event") or payload.get("event_type", "unknown")
-        tenant_id = str(payload.get("tenant_id", "")).strip()
+        tenant_id = str(payload.get("tenant_id") or payload.get("tenant_uuid") or "").strip()
         tenant_code = str(payload.get("tenant_code", "")).strip()
         object_id = str(payload.get("object_id") or payload.get("call_uuid") or payload.get("fax_uuid") or payload.get("message_uuid") or "")
 
@@ -107,21 +107,24 @@ class FreeSwitchWebhookView(APIView):
             return t
 
         # ------------------------------------------------------------------
-        # 1. api_key.created: Synchronous in-memory encryption & provisioning
+        # 1. api_key.created / tenant.created: Synchronous in-memory encryption & provisioning
         # ------------------------------------------------------------------
         raw_api_key = payload.get("api_key")
-        if event_type == "api_key.created" and raw_api_key and tenant_id:
+        if event_type in ("api_key.created", "tenant.created") and tenant_id:
             try:
-                encrypted_key = SecretService.encrypt(raw_api_key)
                 code = tenant_code or "TENANT"
                 name = payload.get("tenant_name") or f"{code} Tenant"
                 domain = str(payload.get("sip_domain") or payload.get("domain") or "").strip()
                 defaults_dict = {
                     "tenant_code": code,
                     "tenant_name": name,
-                    "encrypted_api_key": encrypted_key,
                     "is_active": True,
                 }
+                if raw_api_key:
+                    defaults_dict["encrypted_api_key"] = SecretService.encrypt(raw_api_key)
+                elif not Tenant.objects.filter(freeswitch_tenant_uuid=tenant_id).exists():
+                    defaults_dict["encrypted_api_key"] = ""
+
                 if domain:
                     defaults_dict["sip_domain"] = domain
 
@@ -130,12 +133,13 @@ class FreeSwitchWebhookView(APIView):
                     defaults=defaults_dict,
                 )
                 logger.info(
-                    "Provisioned FreeSWITCH API key for tenant %s (created=%s)",
+                    "Provisioned FreeSWITCH tenant %s via %s (created=%s)",
                     tenant_id,
+                    event_type,
                     created,
                 )
             except Exception as exc:
-                logger.error("Failed to encrypt/save api_key.created for tenant %s: %s", tenant_id, exc)
+                logger.error("Failed to process %s for tenant %s: %s", event_type, tenant_id, exc)
 
         # ------------------------------------------------------------------
         # 2. extension.created / extension.updated / extension.deleted
