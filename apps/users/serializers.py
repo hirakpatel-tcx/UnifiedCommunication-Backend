@@ -25,7 +25,6 @@ from apps.users.validators import validate_fax_boxes, validate_voicemail_boxes
 
 class ExtensionSummarySerializer(serializers.ModelSerializer):
     sip_password = serializers.SerializerMethodField()
-    sip_domain = serializers.SerializerMethodField()
 
     class Meta:
         model = Extension
@@ -34,7 +33,6 @@ class ExtensionSummarySerializer(serializers.ModelSerializer):
             "extension_number",
             "sip_username",
             "sip_password",
-            "sip_domain",
             "transport_type",
         ]
 
@@ -45,15 +43,6 @@ class ExtensionSummarySerializer(serializers.ModelSerializer):
             except Exception:
                 return ""
         return ""
-
-    def get_sip_domain(self, obj) -> str:
-        user = getattr(obj, "user", None)
-        if user:
-            return user.effective_sip_domain
-        tenant = getattr(obj, "tenant", None)
-        if tenant and getattr(tenant, "sip_domain", None):
-            return tenant.sip_domain
-        return ""
     
 
 class UserDIDSummarySerializer(serializers.ModelSerializer):
@@ -62,12 +51,10 @@ class UserDIDSummarySerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="did.name", allow_blank=True, default="")
     did_name = serializers.CharField(source="did.name", allow_blank=True, default="")
     did_number = serializers.CharField(source="did.number", allow_blank=True, default="")
-    calling_enabled = serializers.BooleanField(source="did.calling_enabled")
-    messaging_enabled = serializers.BooleanField(source="did.messaging_enabled")
 
     class Meta:
         model = UserDID
-        fields = ["id", "number", "name", "did_number", "did_name", "calling_enabled", "messaging_enabled"]
+        fields = ["id", "number", "name", "did_number", "did_name"]
 
 
 class TenantSummarySerializer(serializers.ModelSerializer):
@@ -106,12 +93,15 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
     def get_features(self, obj) -> dict:
         if obj.tenant and hasattr(obj.tenant, "features"):
-            return obj.tenant.features
+            return {
+                k: v
+                for k, v in obj.tenant.features.items()
+                if k != "voicemail"
+            }
         return {
             "calling": False,
             "messaging": False,
             "fax": False,
-            "voicemail": False,
         }
 
 
@@ -153,6 +143,42 @@ class LoginSerializer(serializers.Serializer):
                 {"detail": "This user account is disabled."},
                 code="authorization",
             )
+
+        # 4. Safeguards based on tenant features:
+        tenant = user.tenant
+        calling_enabled = bool(tenant and (tenant.features or {}).get("calling", False))
+        messaging_enabled = bool(tenant and (tenant.features or {}).get("messaging", False))
+
+        assigned_dids = list(user.user_dids.all())
+        has_did = len(assigned_dids) > 0
+
+        # Scenario 1: Calling is enabled -> both Extension and DID are required
+        if calling_enabled:
+            has_extension = hasattr(user, "extension") and user.extension is not None
+
+            if not has_extension and not has_did:
+                raise serializers.ValidationError(
+                    {"detail": "Calling is enabled, but you do not have an extension or a DID assigned. Please contact your administrator."},
+                    code="calling_resources_missing",
+                )
+            if not has_extension:
+                raise serializers.ValidationError(
+                    {"detail": "Calling is enabled, but you do not have an extension assigned. Please contact your administrator."},
+                    code="extension_missing",
+                )
+            if not has_did:
+                raise serializers.ValidationError(
+                    {"detail": "Calling is enabled, but you do not have a DID assigned. Please contact your administrator."},
+                    code="did_missing",
+                )
+
+        # Scenario 2: Messaging is enabled and Calling is disabled -> only DIDs allowed/required
+        elif messaging_enabled:
+            if not has_did:
+                raise serializers.ValidationError(
+                    {"detail": "Messaging is enabled, but you do not have a DID assigned. Please contact your administrator."},
+                    code="messaging_did_missing",
+                )
 
         attrs["user"] = user
         return attrs
@@ -339,6 +365,10 @@ class UserUpsertSerializer(serializers.ModelSerializer):
         if did_refs is not None:
             if not tenant and did_refs:
                 raise serializers.ValidationError({"did_ids": "Cannot assign DIDs without a tenant."})
+            calling_enabled = bool(tenant and (tenant.features or {}).get("calling", False))
+            messaging_enabled = bool(tenant and (tenant.features or {}).get("messaging", False))
+            if did_refs and not calling_enabled and not messaging_enabled:
+                raise serializers.ValidationError({"did_ids": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."})
             for did_ref in did_refs:
                 did = _resolve_did(did_ref, tenant)
                 if not did:
@@ -401,6 +431,10 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             else:
                 if not tenant:
                     raise serializers.ValidationError({"did_ids": "User has no tenant assigned."})
+                calling_enabled = bool(tenant and (tenant.features or {}).get("calling", False))
+                messaging_enabled = bool(tenant and (tenant.features or {}).get("messaging", False))
+                if not calling_enabled and not messaging_enabled:
+                    raise serializers.ValidationError({"did_ids": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."})
                 target_dids = []
                 for did_ref in did_refs:
                     did = _resolve_did(did_ref, tenant)

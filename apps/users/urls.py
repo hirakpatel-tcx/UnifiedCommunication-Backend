@@ -8,6 +8,7 @@ from apps.users.views import (
     SipCredentialsView,
     UserDetailView,
     UserDIDView,
+    UserExtensionTransportView,
     UserExtensionView,
     UserFaxBoxView,
     UserListCreateView,
@@ -29,6 +30,7 @@ user_urlpatterns = [
     path("<uuid:id>/sip-credentials/", SipCredentialsView.as_view(), name="user-sip-credentials"),
     # Resource assignments
     path("<uuid:id>/extension/", UserExtensionView.as_view(), name="user-extension"),
+    path("<uuid:id>/extension/transport/", UserExtensionTransportView.as_view(), name="user-extension-transport"),
     path("<uuid:id>/dids/", UserDIDView.as_view(), name="user-dids"),
     path("<uuid:id>/dids/<uuid:did_id>/", UserDIDView.as_view(), name="user-did-delete"),
     path("<uuid:id>/fax-boxes/", UserFaxBoxView.as_view(), name="user-fax-boxes"),

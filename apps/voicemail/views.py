@@ -19,9 +19,9 @@ from apps.common.services.freeswitch_client import FreeSwitchClientService
 
 
 def _validate_voicemail_feature(tenant):
-    if not (tenant.features or {}).get("voicemail", False):
+    if not getattr(tenant, "voicemail_enabled", False):
         return Response(
-            {"detail": "Voicemail feature is disabled for this tenant."},
+            {"detail": "Calling (and Voicemail) feature is disabled for this tenant."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     return None

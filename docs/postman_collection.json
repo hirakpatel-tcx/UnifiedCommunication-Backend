@@ -700,6 +700,46 @@
           "response": []
         },
         {
+          "name": "Update Extension Transport (Superadmin Only)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transport_type\": \"TLS\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/extensions/{{extensionId}}/transport/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "extensions",
+                "{{extensionId}}",
+                "transport",
+                ""
+              ]
+            },
+            "description": "Updates the SIP transport type for an extension. Restricted strictly to superadmin."
+          },
+          "response": []
+        },
+        {
           "name": "List DIDs",
           "request": {
             "auth": {
@@ -729,16 +769,6 @@
                   "value": "{{tenantId}}",
                   "description": "Required for superadmin (can be UUID or code)",
                   "enabled": true
-                },
-                {
-                  "key": "calling_enabled",
-                  "value": "true",
-                  "disabled": true
-                },
-                {
-                  "key": "messaging_enabled",
-                  "value": "true",
-                  "disabled": true
                 },
                 {
                   "key": "search",
@@ -1960,7 +1990,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"event\": \"did.created\",\n  \"tenant_id\": \"{{tenantId}}\",\n  \"tenant_code\": \"TCX\",\n  \"object_id\": \"fs-did-8321234567-uuid\",\n  \"number\": \"+18321234567\",\n  \"calling_enabled\": true,\n  \"messaging_enabled\": true,\n  \"timestamp\": \"2026-08-29T10:20:00Z\"\n}"
+                  "raw": "{\n  \"event\": \"did.created\",\n  \"tenant_id\": \"{{tenantId}}\",\n  \"tenant_code\": \"TCX\",\n  \"object_id\": \"fs-did-8321234567-uuid\",\n  \"number\": \"+18321234567\",\n  \"timestamp\": \"2026-08-29T10:20:00Z\"\n}"
                 },
                 "url": {
                   "raw": "{{baseUrl}}/webhooks/freeswitch/",

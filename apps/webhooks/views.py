@@ -207,10 +207,6 @@ class FreeSwitchWebhookView(APIView):
                         did.number = str(raw_num)[:20]
                     if raw_name is not None:
                         did.name = str(raw_name)[:255]
-                    if "calling_enabled" in payload:
-                        did.calling_enabled = bool(payload["calling_enabled"])
-                    if "messaging_enabled" in payload:
-                        did.messaging_enabled = bool(payload["messaging_enabled"])
                     did.save()
                     logger.info("DID %s (%s) updated for tenant %s", did.number, did.name, tenant.tenant_code)
                 else:
@@ -221,8 +217,6 @@ class FreeSwitchWebhookView(APIView):
                         freeswitch_object_id=object_id,
                         number=did_num,
                         name=did_name,
-                        calling_enabled=payload.get("calling_enabled", True),
-                        messaging_enabled=payload.get("messaging_enabled", True),
                     )
                     logger.info("DID %s (%s) created for tenant %s", did.number, did.name, tenant.tenant_code)
 

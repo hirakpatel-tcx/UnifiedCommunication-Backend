@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
-from apps.common.permissions import IsAdminOrSuperAdmin
+from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
 from apps.common.services.secret_service import SecretService
 from apps.dids.models import DID, UserDID
 from apps.extensions.models import Extension
@@ -274,6 +274,48 @@ class UserExtensionView(APIView):
         return Response({"status": "unassigned"}, status=status.HTTP_200_OK)
 
 
+class UserExtensionTransportView(APIView):
+    """
+    PATCH /api/v1/users/{id}/extension/transport/
+    POST  /api/v1/users/{id}/extension/transport/
+    Updates the transport type for the target user's assigned extension.
+    RESTRICTED: Only superadmin can change transport type.
+    """
+    permission_classes = [IsSuperAdmin]
+
+    def patch(self, request, id, *args, **kwargs):
+        target_user = get_object_or_404(User, id=id)
+
+        extension = getattr(target_user, "extension", None)
+        if not extension:
+            return Response(
+                {"detail": "No extension assigned to this user."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from apps.extensions.serializers import ExtensionTransportUpdateSerializer
+        serializer = ExtensionTransportUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        new_transport = serializer.validated_data["transport_type"]
+        extension.transport_type = new_transport
+        extension.save(update_fields=["transport_type", "updated_at"])
+
+        return Response(
+            {
+                "id": str(extension.id),
+                "extension_number": extension.extension_number,
+                "sip_username": extension.sip_username,
+                "transport_type": extension.transport_type,
+                "updated_at": extension.updated_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, id, *args, **kwargs):
+        return self.patch(request, id, *args, **kwargs)
+
+
 class UserDIDView(APIView):
     """
     POST   /api/v1/users/{id}/dids/ — Grant DID access
@@ -288,6 +330,16 @@ class UserDIDView(APIView):
 
         did_id = serializer.validated_data["did_id"]
         did = get_object_or_404(DID, id=did_id)
+
+        tenant = target_user.tenant or did.tenant
+        calling_enabled = bool(tenant and (tenant.features or {}).get("calling", False))
+        messaging_enabled = bool(tenant and (tenant.features or {}).get("messaging", False))
+
+        if not calling_enabled and not messaging_enabled:
+            return Response(
+                {"detail": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if target_user.tenant_id and did.tenant_id != target_user.tenant_id:
             return Response(

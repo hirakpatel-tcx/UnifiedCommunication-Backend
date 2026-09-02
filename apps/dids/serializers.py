@@ -32,8 +32,6 @@ class DIDSerializer(serializers.ModelSerializer):
             "number",
             "did_number",
             "did_name",
-            "calling_enabled",
-            "messaging_enabled",
             "assigned_users_count",
             "assigned_users",
             "created_at",

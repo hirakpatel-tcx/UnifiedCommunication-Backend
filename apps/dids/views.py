@@ -25,21 +25,6 @@ class DIDListView(generics.ListAPIView):
         tenant = get_scoped_tenant(self.request)
         qs = DID.objects.filter(tenant=tenant).select_related("tenant").prefetch_related("user_dids__user")
 
-        # Capabilities filtering
-        calling = self.request.query_params.get("calling_enabled")
-        if calling is not None:
-            if calling.lower() in ("true", "1"):
-                qs = qs.filter(calling_enabled=True)
-            elif calling.lower() in ("false", "0"):
-                qs = qs.filter(calling_enabled=False)
-
-        messaging = self.request.query_params.get("messaging_enabled")
-        if messaging is not None:
-            if messaging.lower() in ("true", "1"):
-                qs = qs.filter(messaging_enabled=True)
-            elif messaging.lower() in ("false", "0"):
-                qs = qs.filter(messaging_enabled=False)
-
         # Search query (by phone number)
         search = self.request.query_params.get("search")
         if search:

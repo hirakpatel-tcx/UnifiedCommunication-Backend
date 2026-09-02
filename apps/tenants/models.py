@@ -24,10 +24,9 @@ from apps.common.models import TimestampedModel
 FEATURE_CALLING = "calling"
 FEATURE_MESSAGING = "messaging"
 FEATURE_FAX = "fax"
-FEATURE_VOICEMAIL = "voicemail"
 
 VALID_FEATURE_KEYS = frozenset(
-    {FEATURE_CALLING, FEATURE_MESSAGING, FEATURE_FAX, FEATURE_VOICEMAIL}
+    {FEATURE_CALLING, FEATURE_MESSAGING, FEATURE_FAX}
 )
 
 
@@ -44,20 +43,23 @@ def validate_tenant_features(value: dict) -> None:
             "calling":   bool,
             "messaging": bool,
             "fax":       bool,
-            "voicemail": bool,
         }
 
     Rules:
     - Must be a dict.
     - All keys must be in VALID_FEATURE_KEYS.
     - All values must be booleans.
-    - No extra keys are allowed (strict validation).
+    - Voicemail is automatically enabled if calling is enabled.
     """
     if not isinstance(value, dict):
         raise ValidationError(
             "features must be a JSON object (dict).",
             code="features_not_dict",
         )
+
+    # Voicemail is automatically tied to calling; strip if passed
+    if "voicemail" in value:
+        value.pop("voicemail", None)
 
     unknown_keys = set(value.keys()) - VALID_FEATURE_KEYS
     if unknown_keys:
@@ -85,7 +87,6 @@ def default_tenant_features() -> dict:
         FEATURE_CALLING: False,
         FEATURE_MESSAGING: False,
         FEATURE_FAX: False,
-        FEATURE_VOICEMAIL: False,
     }
 
 
@@ -148,9 +149,9 @@ class Tenant(TimestampedModel):
         validators=[validate_tenant_features],
         help_text=(
             "Dict of enabled features for this tenant. "
-            "Valid keys: calling, messaging, fax, voicemail. "
-            "Values must be booleans. "
-            "Example: {\"calling\": true, \"messaging\": true, \"fax\": false, \"voicemail\": true}"
+            "Valid keys: calling, messaging, fax. "
+            "Values must be booleans. Voicemail is automatically enabled if calling is enabled. "
+            "Example: {\"calling\": true, \"messaging\": true, \"fax\": false}"
         ),
     )
     sip_domain = models.CharField(
@@ -184,6 +185,11 @@ class Tenant(TimestampedModel):
             f"code={self.tenant_code!r}>"
         )
 
+    def save(self, *args, **kwargs):
+        if isinstance(self.features, dict) and "voicemail" in self.features:
+            self.features = {k: v for k, v in self.features.items() if k != "voicemail"}
+        super().save(*args, **kwargs)
+
     # ------------------------------------------------------------------
     # Feature helpers — thin convenience methods; business logic belongs
     # in TenantService.
@@ -207,4 +213,5 @@ class Tenant(TimestampedModel):
 
     @property
     def voicemail_enabled(self) -> bool:
-        return self.is_feature_enabled(FEATURE_VOICEMAIL)
+        """Voicemail is automatically enabled if calling is enabled."""
+        return self.calling_enabled

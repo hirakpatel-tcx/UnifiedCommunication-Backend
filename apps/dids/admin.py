@@ -14,12 +14,10 @@ class DIDAdmin(admin.ModelAdmin):
         "number",
         "name",
         "tenant",
-        "calling_enabled",
-        "messaging_enabled",
         "freeswitch_object_id",
         "created_at",
     )
-    list_filter = ("tenant", "calling_enabled", "messaging_enabled")
+    list_filter = ("tenant",)
     search_fields = ("number", "name", "freeswitch_object_id")
     inlines = [DIDUserInline]
 

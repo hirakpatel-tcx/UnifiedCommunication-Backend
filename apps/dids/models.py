@@ -86,20 +86,6 @@ class DID(TimestampedModel):
         help_text="Human-readable name or label for this DID (e.g. 'Main Line', 'Support').",
     )
 
-    # ------------------------------------------------------------------
-    # Capabilities — calling and messaging ONLY.
-    # There is NO fax_enabled field. Fax = FaxBox.
-    # ------------------------------------------------------------------
-    calling_enabled = models.BooleanField(
-        default=False,
-        help_text="This DID can be used for voice calling.",
-    )
-    messaging_enabled = models.BooleanField(
-        default=False,
-        help_text="This DID can be used for SMS/MMS messaging.",
-    )
-    # DO NOT add fax_enabled here. Fax capability is represented by FaxBox only.
-
     class Meta:
         db_table = "dids"
         verbose_name = "DID"
@@ -119,13 +105,7 @@ class DID(TimestampedModel):
         ]
 
     def __str__(self) -> str:
-        caps = []
-        if self.calling_enabled:
-            caps.append("calling")
-        if self.messaging_enabled:
-            caps.append("messaging")
-        cap_str = "+".join(caps) if caps else "no capabilities"
-        return f"{self.number} ({self.tenant.tenant_code}) [{cap_str}]"
+        return f"{self.number} ({self.tenant.tenant_code})"
 
     def __repr__(self) -> str:
         return (

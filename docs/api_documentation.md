@@ -106,15 +106,13 @@ Authenticates a user with email and application password. Returns JWT access/ref
     "features": {
       "calling": true,
       "messaging": true,
-      "fax": false,
-      "voicemail": true
+      "fax": false
     },
     "extension": {
       "id": "3163c924-e0fd-458e-8a05-912889f428f6",
       "extension_number": "101",
       "sip_username": "101-TCX",
       "sip_password": "PlaintextSipPassword",
-      "sip_domain": "sip.example.com",
       "transport_type": "TLS"
     },
     "dids": [],
@@ -124,6 +122,19 @@ Authenticates a user with email and application password. Returns JWT access/ref
   }
 }
 ```
+
+#### Authentication & Feature Safeguards (`400 Bad Request`)
+- **If Calling is Enabled**: Users must have both an extension and a DID assigned:
+  - **No Extension & No DID**: `{"detail": "Calling is enabled, but you do not have an extension or a DID assigned. Please contact your administrator."}`
+  - **No Extension**: `{"detail": "Calling is enabled, but you do not have an extension assigned. Please contact your administrator."}`
+  - **No DID**: `{"detail": "Calling is enabled, but you do not have a DID assigned. Please contact your administrator."}`
+- **If Messaging is Enabled & Calling is Disabled**: Users require an assigned DID:
+  - **No DID Assigned**: `{"detail": "Messaging is enabled, but you do not have a DID assigned. Please contact your administrator."}`
+
+#### Resource Assignment Rules:
+- **Extensions**: Only allowed when `calling` is enabled for the tenant.
+- **DIDs**: Allowed when `calling` OR `messaging` is enabled. Blocked if both are disabled.
+- **FaxBoxes**: Only allowed when `fax` is enabled for the tenant.
 
 ### POST `/auth/token/refresh/`
 Refreshes an expired access token using a valid refresh token.
@@ -181,8 +192,7 @@ Lists all tenants with live telephony resource counts. Blocked for `admin` and `
       "features": {
         "calling": true,
         "messaging": true,
-        "fax": true,
-        "voicemail": true
+        "fax": true
       },
       "is_active": true,
       "extensions_count": 12,
@@ -194,6 +204,8 @@ Lists all tenants with live telephony resource counts. Blocked for `admin` and `
   ]
 }
 ```
+
+> **Note on Voicemail**: `voicemail` is no longer a separate tenant feature flag. If `calling` is enabled for the tenant, voicemail capability is automatically enabled.
 
 ### POST `/tenants/` *(Superadmin Only)*
 Creates a new tenant.
@@ -246,6 +258,35 @@ Lists extensions for softphone assignment.
 ### GET `/extensions/{id}/`
 Retrieves single extension details.
 
+### PATCH `/extensions/{id}/transport/` *(Superadmin Only)*
+Updates the SIP transport type for an extension.
+
+#### Permissions
+- Restricted strictly to `superadmin`. Tenant admins and regular users receive `403 Forbidden`.
+
+#### Request Body
+```json
+{
+  "transport_type": "TLS"
+}
+```
+*Supported `transport_type` choices*: `UDP`, `TCP`, `TLS`, `DTLS` (case-insensitive).
+
+#### Response `200 OK`
+```json
+{
+  "id": "3163c924-e0fd-458e-8a05-912889f428f6",
+  "extension_number": "101",
+  "sip_username": "101-TCX",
+  "transport_type": "TLS",
+  "updated_at": "2026-09-02T17:07:40.353337Z"
+}
+```
+
+> **Alternative Endpoints**:
+> - `PATCH /api/v1/extensions/{id}/` with `{"transport_type": "TLS"}` *(Superadmin Only)*
+> - `PATCH /api/v1/users/{id}/extension/transport/` with `{"transport_type": "TLS"}` *(Superadmin Only)*
+
 ---
 
 ### GET `/dids/`
@@ -255,8 +296,6 @@ Lists phone numbers (DIDs) with tenant scoping, capabilities, and assigned users
 
 #### Query Parameters
 - `tenant_id` *(required for superadmin)*: Internal UUID, FreeSWITCH UUID, or Tenant Code.
-- `calling_enabled` *(boolean, optional)*: `true` / `false`.
-- `messaging_enabled` *(boolean, optional)*: `true` / `false`.
 - `search` *(string, optional)*: Search by phone number (e.g. `+1832`).
 
 #### Response `200 OK`
@@ -276,8 +315,6 @@ Lists phone numbers (DIDs) with tenant scoping, capabilities, and assigned users
       "name": "Main Line",
       "did_number": "+18321234567",
       "did_name": "Main Line",
-      "calling_enabled": true,
-      "messaging_enabled": true,
       "assigned_users_count": 1,
       "assigned_users": [
         {
@@ -362,8 +399,7 @@ Since Extensions and DIDs are already provisioned into the database via FreeSWIT
     {
       "id": "38a784eb-e08a-441f-9e01-893b15728163",
       "number": "+18321234567",
-      "calling_enabled": true,
-      "messaging_enabled": true
+      "name": "Main Line"
     }
   ],
   "fax_boxes": [
@@ -544,7 +580,7 @@ Receives FreeSWITCH notifications and synchronizes database state.
    - Unlinks from assigned user (`on_delete=SET_NULL`) and deletes local extension.
 4. **`did.created` & `did.updated`**:
    - Supports `did_number` / `number` and `did_name` / `name`.
-   - Synchronizes DID number, name, `calling_enabled`, and `messaging_enabled`.
+   - Synchronizes DID number and name.
 5. **`did.deleted`**:
    - Cleans up DID and associated `UserDID` assignments.
 6. **`voicemail.received` & `fax.received`**:
