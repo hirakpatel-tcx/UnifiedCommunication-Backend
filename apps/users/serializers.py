@@ -7,7 +7,7 @@ Serializers for authentication, user management, and unified resource provisioni
 import uuid
 from django.contrib.auth import authenticate
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from rest_framework import serializers
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -117,10 +117,12 @@ class LoginSerializer(serializers.Serializer):
         email = attrs.get("email", "").strip().lower()
         password = attrs.get("password")
 
-        # 1. Check if user exists (with eager loading of tenant, extension, and user_dids)
+        # 1. Check if user exists (with single-join eager loading of tenant, extension, and user_dids with did)
         user = (
             User.objects.select_related("tenant", "extension")
-            .prefetch_related("user_dids__did")
+            .prefetch_related(
+                Prefetch("user_dids", queryset=UserDID.objects.select_related("did"))
+            )
             .filter(email=email)
             .first()
         )
