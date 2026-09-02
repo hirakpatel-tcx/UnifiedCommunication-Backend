@@ -4,6 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from apps.users.views import (
     CurrentUserView,
     LoginView,
+    LogoutView,
     SipCredentialsView,
     UserDetailView,
     UserDIDView,
@@ -16,6 +17,7 @@ from apps.users.views import (
 # Authentication endpoints: /api/v1/auth/
 auth_urlpatterns = [
     path("login/", LoginView.as_view(), name="auth-login"),
+    path("logout/", LogoutView.as_view(), name="auth-logout"),
     path("token/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
     path("me/", CurrentUserView.as_view(), name="auth-me"),
 ]

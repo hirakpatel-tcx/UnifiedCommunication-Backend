@@ -135,6 +135,23 @@ Refreshes an expired access token using a valid refresh token.
 }
 ```
 
+### POST `/auth/logout/`
+Logs out the user and invalidates their session by blacklisting the refresh token.
+
+#### Request Body
+```json
+{
+  "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "detail": "Successfully logged out."
+}
+```
+
 ### GET `/auth/me/`
 Returns the currently authenticated user's profile and telephony configurations.
 
@@ -514,7 +531,8 @@ The backend acts as an authenticated proxy for FreeSWITCH / Cloud PBX Client API
 Receives FreeSWITCH notifications and synchronizes database state.
 
 #### Supported Events & Behaviors
-1. **`api_key.created`**:
+1. **`tenant.created` & `api_key.created`**:
+   - Accepts `tenant_uuid` or `tenant_id`, `tenant_code`, `tenant_name`, `api_key`, `sip_domain`.
    - In-memory encryption via `SecretService.encrypt()`.
    - Auto-provisions or updates `Tenant` with `encrypted_api_key`.
 2. **`extension.created` & `extension.updated`**:
