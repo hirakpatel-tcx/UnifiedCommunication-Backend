@@ -13,6 +13,8 @@
 2. [Authentication & Authorization](#2-authentication--authorization)
    - [POST /auth/login/](#post-authlogin)
    - [POST /auth/token/refresh/](#post-authtokenrefresh)
+   - [POST /auth/logout/](#post-authlogout)
+   - [POST /auth/change-password/](#post-authchange-password)
    - [GET /auth/me/](#get-authme)
 3. [Tenants Management](#3-tenants-management)
    - [GET /tenants/](#get-tenants-superadmin-only)
@@ -30,6 +32,8 @@
    - [GET /users/](#get-users)
    - [GET /users/{id}/](#get-usersid)
    - [DELETE /users/{id}/](#delete-usersid)
+   - [POST /users/{id}/reset-password-email/](#post-usersidreset-password-email)
+   - [POST /users/{id}/admin-reset-password/](#post-usersidadmin-reset-password)
    - [GET /users/{id}/sip-credentials/](#get-usersidsip-credentials)
 6. [Telephony Resource Assignments](#6-telephony-resource-assignments)
    - [Extension Assignment: POST/DELETE /users/{id}/extension/](#61-extension-assignment)
@@ -47,6 +51,12 @@
    - [GET /audit-logs/](#get-audit-logs)
    - [GET /webhook-logs/](#get-webhook-logs)
 10. [Realtime WebSocket Protocol](#10-realtime-websocket-protocol)
+11. [Contacts & Directory Management](#11-contacts--directory-management)
+   - [GET /contacts/](#get-contacts)
+   - [POST /contacts/](#post-contacts)
+   - [GET /contacts/{id}/](#get-contactsid)
+   - [PUT & PATCH /contacts/{id}/](#put--patch-contactsid)
+   - [DELETE /contacts/{id}/](#delete-contactsid)
 
 ---
 
@@ -65,6 +75,15 @@ The platform implements a strict 3-tier Role-Based Access Control model:
 - **Secret Sanitization**: Inbound webhooks automatically redact `password`, `sip_password`, `api_key`, `secret`, and `token` fields before writing to `WebhookLog`.
 - **48-Hour Webhook Log TTL**: Webhook logs expire and are pruned after 48 hours via indexed `expires_at`.
 - **Resource Routing Pattern**: Voicemail and Fax messages are NOT stored locally in PostgreSQL. The backend holds only resource assignments (`User.voicemail_boxes`, `User.fax_boxes`) and routes inbound FreeSWITCH events to assigned users.
+
+### Standard Pagination & Export Parameters
+All listing endpoints (`/tenants/`, `/users/`, `/extensions/`, `/dids/`, `/contacts/`, `/audit-logs/`, `/webhook-logs/`, `/cdr/`, `/fax/boxes/`, `/fax/files/`, `/recordings/`, `/voicemail/messages/`) support standard pagination and bulk export query parameters:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | integer | `1` | 1-based page index. |
+| `page_size` | integer | `25` | Number of results per page (up to `1000`). |
+| `export_all` | boolean / string | `false` | When set to `true` (or `?export=all`), bypasses pagination and returns all matching records in a single array. |
 
 ---
 
@@ -94,8 +113,12 @@ Authenticates a user with email and application password. Returns JWT access/ref
   "user": {
     "id": "dc151ca8-2c62-4f48-a3f0-cbb58c2e8aea",
     "email": "agent@tcx.com",
+    "first_name": "Agent",
+    "last_name": "Smith",
     "role": "user",
     "is_active": true,
+    "is_first_login": true,
+    "must_change_password": true,
     "tenant": {
       "id": "faa447b0-f40c-4bcf-b651-4131f6634f27",
       "freeswitch_tenant_uuid": "7fae0a2e-4b21-4322-81fa-223456789abc",
@@ -160,6 +183,29 @@ Logs out the user and invalidates their session by blacklisting the refresh toke
 ```json
 {
   "detail": "Successfully logged out."
+}
+```
+
+### POST `/auth/change-password/`
+Allows authenticated users to change their own password (e.g. following first-time login or an admin temporary password reset). Upon success, `must_change_password` is reset to `false`.
+
+#### Headers
+`Authorization: Bearer <access_token>`
+
+#### Request Body
+```json
+{
+  "current_password": "TemporaryPassword123!",
+  "new_password": "MyNewSecurePassword123!"
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "status": "success",
+  "detail": "Password changed successfully.",
+  "must_change_password": false
 }
 ```
 
@@ -352,6 +398,8 @@ Since Extensions and DIDs are already provisioned into the database via FreeSWIT
 {
   "email": "agent1@tcx.com",
   "password": "SecurePassword123!",
+  "first_name": "Agent",
+  "last_name": "One",
   "role": "user",
   "tenant_id": "faa447b0-f40c-4bcf-b651-4131f6634f27",
   "extension_id": "3163c924-e0fd-458e-8a05-912889f428f6",
@@ -379,6 +427,8 @@ Since Extensions and DIDs are already provisioned into the database via FreeSWIT
 {
   "id": "378289bb-2ad2-479e-b466-2ec2ae79651f",
   "email": "agent1@tcx.com",
+  "first_name": "Agent",
+  "last_name": "One",
   "role": "user",
   "is_active": true,
   "tenant": {
@@ -422,6 +472,8 @@ Atomically updates user attributes and/or updates/replaces resource assignments.
 #### Request Body
 ```json
 {
+  "first_name": "Agent",
+  "last_name": "Updated",
   "role": "admin",
   "sip_domain": "custom.sip.example.com",
   "extension_id": null,
@@ -447,6 +499,45 @@ Retrieves full user profile with all nested resources (`tenant`, `extension`, `d
 
 ### DELETE `/users/{id}/`
 Deletes user and unlinks all assigned resources.
+
+### POST `/users/{id}/reset-password-email/`
+*(Admin or Superadmin)*  
+Generates a cryptographically secure 12-character temporary password, sets the user's password to it, marks `must_change_password = true`, and dispatches an email to the user with their temporary password and login instructions.
+
+#### Headers
+`Authorization: Bearer <access_token>`
+
+#### Response `200 OK`
+```json
+{
+  "status": "success",
+  "detail": "Temporary password sent to user@example.com."
+}
+```
+
+### POST `/users/{id}/admin-reset-password/`
+*(Admin or Superadmin)*  
+Allows an administrator to manually override and set a user's password. The request body includes an option (`must_change_password`) specifying whether the user must change their password upon their next login.
+
+#### Headers
+`Authorization: Bearer <access_token>`
+
+#### Request Body
+```json
+{
+  "new_password": "AdminAssignedPassword123!",
+  "must_change_password": true
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "status": "success",
+  "detail": "Password updated successfully.",
+  "must_change_password": true
+}
+```
 
 ### GET `/users/{id}/sip-credentials/`
 Decrypts in-memory and returns SIP credentials for softphone client registration.  
@@ -604,3 +695,136 @@ Receives FreeSWITCH notifications and synchronizes database state.
 **Endpoint:** `wss://api.yourdomain.com/ws/realtime/?token=<JWT_ACCESS_TOKEN>`
 
 When connected, clients receive real-time call states, fax events, and voicemail notifications routed through Django Channels and the PostgreSQL Outbox pattern.
+
+---
+
+## 11. Contacts & Directory Management
+
+The Contacts module provides unified management of contacts for both **Company Directory** (tenant-wide, shared phonebook) and **User-Based Directory** (personal, user-private contacts).
+
+### Directory Types & Permission Matrix
+
+| Directory Type | View / Search | Create / Update / Delete | Owner Field | Description |
+|---|---|---|---|---|
+| `personal` | Contact Owner (and SuperAdmin) | Contact Owner (and SuperAdmin) | `User.id` | User's private address book. Other tenant users cannot see or modify. |
+| `company` | All authenticated users in the tenant | Tenant `admin` & `superadmin` | `null` | Organization-wide shared directory (e.g. general numbers, queues, vendors, clients). |
+
+---
+
+### GET `/contacts/`
+Lists contacts accessible to the authenticated user (Company Directory contacts in their tenant + their own Personal Directory contacts).
+
+#### Query Parameters
+- `directory_type`: Filter by `company` or `personal`.
+- `search`: Case-insensitive search across `first_name`, `last_name`, `email`, `notes`, `numbers__number`, and `numbers__label`.
+- `is_favorite`: Filter by `true` or `false`.
+- `page`: Page number (default: 1).
+- `page_size`: Results per page (default: 25).
+- `tenant_id`: *(SuperAdmin only)* Target specific tenant.
+
+#### Response `200 OK`
+```json
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "c13ef8eb-be58-4f21-ac67-c9c198837166",
+      "tenant": "3cf3ce14-2662-4be2-b9e3-2c661f3379c6",
+      "owner": "81f6f1e6-52ab-4dc0-b84b-62e2abc24995",
+      "owner_email": "alice@acme.com",
+      "created_by": "81f6f1e6-52ab-4dc0-b84b-62e2abc24995",
+      "created_by_email": "alice@acme.com",
+      "directory_type": "personal",
+      "first_name": "Sarah",
+      "last_name": "Connor",
+      "full_name": "Sarah Connor",
+      "email": "sarah@example.com",
+      "notes": "VIP Client from Sector 4",
+      "is_favorite": true,
+      "numbers": [
+        {
+          "id": "1e72e1fa-58cb-4654-a690-349079a099a4",
+          "number": "+12025550111",
+          "label": "Work",
+          "is_primary": true,
+          "created_at": "2026-09-03T20:45:00Z",
+          "updated_at": "2026-09-03T20:45:00Z"
+        },
+        {
+          "id": "4b68e0de-75bf-4091-a1b9-1e149cb2e09c",
+          "number": "+12025550122",
+          "label": "Mobile",
+          "is_primary": false,
+          "created_at": "2026-09-03T20:45:00Z",
+          "updated_at": "2026-09-03T20:45:00Z"
+        }
+      ],
+      "created_at": "2026-09-03T20:45:00Z",
+      "updated_at": "2026-09-03T20:45:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### POST `/contacts/`
+Creates a new contact.
+
+#### Validation Rules
+- `first_name`: **Required** string (cannot be blank).
+- `numbers`: **Required** array containing at least one valid phone number object `{"number": "...", "label": "..."}`.
+- `label`: Optional string. Defaults to `"Mobile"`. Custom labels are fully supported (e.g. `"Work"`, `"Mobile"`, `"Direct Desk"`, `"Emergency Line"`).
+- Multiple numbers can have identical labels or different labels.
+- `directory_type`: Defaults to `"personal"`. If `"company"` is specified, requester must have `admin` or `superadmin` role.
+
+#### Request Body
+```json
+{
+  "directory_type": "personal",
+  "first_name": "Sarah",
+  "last_name": "Connor",
+  "email": "sarah@example.com",
+  "notes": "VIP Client from Sector 4",
+  "is_favorite": true,
+  "numbers": [
+    {
+      "number": "+12025550111",
+      "label": "Work",
+      "is_primary": true
+    },
+    {
+      "number": "+12025550122",
+      "label": "Mobile"
+    },
+    {
+      "number": "1004",
+      "label": "Direct Desk"
+    }
+  ]
+}
+```
+
+#### Response `201 Created`
+Returns the complete created contact object with generated UUIDs and numbers.
+
+---
+
+### GET `/contacts/{id}/`
+Retrieves a contact and all its phone numbers by UUID. Returns `404 Not Found` if the contact does not belong to the user's scope or tenant.
+
+---
+
+### PUT & PATCH `/contacts/{id}/`
+Updates contact fields and associated phone numbers.
+- **`PATCH`**: Partial update. Send only the fields to modify (e.g. `{"first_name": "Sara", "is_favorite": true}`).
+- **`PUT`**: Replaces contact details. If `numbers` is provided, replaces the contact's phone numbers. Must include at least one number.
+
+---
+
+### DELETE `/contacts/{id}/`
+Deletes the contact and cascades the deletion to all associated phone numbers.
+- Response: `200 OK` with `{"detail": "Contact deleted successfully."}`.
+

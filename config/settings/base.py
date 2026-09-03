@@ -70,6 +70,7 @@ LOCAL_APPS = [
     "apps.webhooks.apps.WebhooksConfig",
     "apps.audit.apps.AuditConfig",
     "apps.outbox.apps.OutboxConfig",
+    "apps.contacts.apps.ContactsConfig",
 ]
 
 INSTALLED_APPS = LOCAL_APPS + THIRD_PARTY_APPS + DJANGO_APPS
@@ -218,7 +219,7 @@ REST_FRAMEWORK = {
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.OrderingFilter",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardPagination",
     "PAGE_SIZE": 25,
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",

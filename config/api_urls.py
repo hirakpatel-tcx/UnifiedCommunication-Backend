@@ -24,6 +24,9 @@ urlpatterns = [
     path("extensions/", include("apps.extensions.urls")),
     path("dids/", include("apps.dids.urls")),
 
+    # Contacts & Directory
+    path("contacts/", include("apps.contacts.urls")),
+
     # Voicemail Proxy
     path("voicemail/", include("apps.voicemail.urls")),
 

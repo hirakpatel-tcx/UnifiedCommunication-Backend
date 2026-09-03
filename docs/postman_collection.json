@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "9b1c7f42-4321-4f12-9c76-ucbackend0001",
     "name": "Unified Communication Backend API",
-    "description": "Comprehensive Postman collection for the Unified Communication Backend platform, covering Authentication, Multi-Tenant Management, Users, Telephony Assignments (Extension, DID, FaxBox, VoicemailBox), Communications (Calls, Voicemail, Fax, CDR), Inbound Webhooks, and Audit Logs.",
+    "description": "Comprehensive Postman collection for the Unified Communication Backend platform, covering Authentication, Multi-Tenant Management, Users, Telephony Assignments (Extension, DID, FaxBox, VoicemailBox), Communications (Calls, Voicemail, Fax, CDR), Inbound Webhooks, Audit Logs, and Contacts & Directory Management.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -49,6 +49,11 @@
     {
       "key": "voicemailBoxId",
       "value": "1001",
+      "type": "string"
+    },
+    {
+      "key": "contactId",
+      "value": "c13ef8eb-be58-4f21-ac67-c9c198837166",
       "type": "string"
     }
   ],
@@ -253,6 +258,24 @@
                 {
                   "key": "is_active",
                   "value": "true"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
                 }
               ]
             }
@@ -416,6 +439,30 @@
                 {
                   "key": "is_active",
                   "value": "true"
+                },
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenantId}}",
+                  "description": "Optional for SuperAdmin to filter by tenant",
+                  "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
                 }
               ]
             }
@@ -443,7 +490,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"agent1@tcx.com\",\n  \"password\": \"AgentPassword123!\",\n  \"role\": \"user\",\n  \"tenant_id\": \"{{tenantId}}\",\n  \"extension_id\": \"{{extensionId}}\",\n  \"did_ids\": [\n    \"{{didId}}\"\n  ],\n  \"fax_boxes\": [\n    {\n      \"fax_uuid\": \"978c7337-d642-4cd7-a38a-d0a61c2cfbde\",\n      \"fax_caller_id_name\": \"Sales Fax\",\n      \"fax_caller_id_number\": \"+18325550123\"\n    }\n  ],\n  \"voicemail_boxes\": [\n    101,\n    1001\n  ]\n}"
+              "raw": "{\n  \"email\": \"agent1@tcx.com\",\n  \"password\": \"AgentPassword123!\",\n  \"first_name\": \"Agent\",\n  \"last_name\": \"One\",\n  \"role\": \"user\",\n  \"tenant_id\": \"{{tenantId}}\",\n  \"extension_id\": \"{{extensionId}}\",\n  \"did_ids\": [\n    \"{{didId}}\"\n  ],\n  \"fax_boxes\": [\n    {\n      \"fax_uuid\": \"978c7337-d642-4cd7-a38a-d0a61c2cfbde\",\n      \"fax_caller_id_name\": \"Sales Fax\",\n      \"fax_caller_id_number\": \"+18325550123\"\n    }\n  ],\n  \"voicemail_boxes\": [\n    101,\n    1001\n  ]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/users/",
@@ -525,7 +572,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"role\": \"admin\",\n  \"extension_id\": \"{{extensionId}}\",\n  \"did_ids\": [\n    \"{{didId}}\"\n  ],\n  \"voicemail_boxes\": [\n    101,\n    2002\n  ]\n}"
+              "raw": "{\n  \"first_name\": \"Agent\",\n  \"last_name\": \"Updated\",\n  \"role\": \"admin\",\n  \"extension_id\": \"{{extensionId}}\",\n  \"did_ids\": [\n    \"{{didId}}\"\n  ],\n  \"voicemail_boxes\": [\n    101,\n    2002\n  ]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/users/{{userId}}/",
@@ -642,6 +689,24 @@
                   "key": "search",
                   "value": "101",
                   "description": "Search by number or SIP username",
+                  "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
                   "disabled": true
                 }
               ]
@@ -773,6 +838,24 @@
                 {
                   "key": "search",
                   "value": "+1832",
+                  "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
                   "disabled": true
                 }
               ]
@@ -1158,6 +1241,24 @@
                       "key": "extension",
                       "value": "101",
                       "disabled": true
+                    },
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "description": "Page number",
+                      "disabled": true
+                    },
+                    {
+                      "key": "page_size",
+                      "value": "25",
+                      "description": "Number of results per page (default: 25, max: 1000)",
+                      "disabled": true
+                    },
+                    {
+                      "key": "export_all",
+                      "value": "true",
+                      "description": "Set to true to bypass pagination and export all matching records",
+                      "disabled": true
                     }
                   ]
                 }
@@ -1376,6 +1477,24 @@
                       "key": "search",
                       "value": "John",
                       "disabled": true
+                    },
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "description": "Page number",
+                      "disabled": true
+                    },
+                    {
+                      "key": "page_size",
+                      "value": "25",
+                      "description": "Number of results per page (default: 25, max: 1000)",
+                      "disabled": true
+                    },
+                    {
+                      "key": "export_all",
+                      "value": "true",
+                      "description": "Set to true to bypass pagination and export all matching records",
+                      "disabled": true
                     }
                   ]
                 }
@@ -1534,6 +1653,26 @@
                     "fax",
                     "boxes",
                     ""
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "description": "Page number",
+                      "disabled": true
+                    },
+                    {
+                      "key": "page_size",
+                      "value": "25",
+                      "description": "Number of results per page (default: 25, max: 1000)",
+                      "disabled": true
+                    },
+                    {
+                      "key": "export_all",
+                      "value": "true",
+                      "description": "Set to true to bypass pagination and export all matching records",
+                      "disabled": true
+                    }
                   ]
                 }
               }
@@ -1596,6 +1735,24 @@
                     {
                       "key": "search",
                       "value": "invoice",
+                      "disabled": true
+                    },
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "description": "Page number",
+                      "disabled": true
+                    },
+                    {
+                      "key": "page_size",
+                      "value": "25",
+                      "description": "Number of results per page (default: 25, max: 1000)",
+                      "disabled": true
+                    },
+                    {
+                      "key": "export_all",
+                      "value": "true",
+                      "description": "Set to true to bypass pagination and export all matching records",
                       "disabled": true
                     }
                   ]
@@ -1772,6 +1929,32 @@
                   "path": [
                     "recordings",
                     ""
+                  ],
+                  "query": [
+                    {
+                      "key": "tenant_id",
+                      "value": "{{tenantId}}",
+                      "description": "Optional tenant filter (required for SuperAdmin cross-tenant)",
+                      "disabled": true
+                    },
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "description": "Page number",
+                      "disabled": true
+                    },
+                    {
+                      "key": "page_size",
+                      "value": "25",
+                      "description": "Number of results per page (default: 25, max: 1000)",
+                      "disabled": true
+                    },
+                    {
+                      "key": "export_all",
+                      "value": "true",
+                      "description": "Set to true to bypass pagination and export all matching records",
+                      "disabled": true
+                    }
                   ]
                 }
               }
@@ -2221,6 +2404,24 @@
                 {
                   "key": "action",
                   "value": "user.created"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
                 }
               ]
             }
@@ -2254,7 +2455,515 @@
                 {
                   "key": "processing_status",
                   "value": "done"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
                 }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Contacts & Directory Management",
+      "item": [
+        {
+          "name": "List Contacts (Default / All Accessible)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Company Directory Contacts",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/?directory_type=company",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "directory_type",
+                  "value": "company"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Personal Directory Contacts",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/?directory_type=personal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "directory_type",
+                  "value": "personal"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Search Contacts (Name, Number, Email, Label, Notes)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/?search=Sarah",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "Sarah"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Filter Favorite Contacts",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/?is_favorite=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "is_favorite",
+                  "value": "true"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number",
+                  "disabled": true
+                },
+                {
+                  "key": "page_size",
+                  "value": "25",
+                  "description": "Number of results per page (default: 25, max: 1000)",
+                  "disabled": true
+                },
+                {
+                  "key": "export_all",
+                  "value": "true",
+                  "description": "Set to true to bypass pagination and export all matching records",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Personal Contact (with Multiple Numbers & Custom Labels)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.environment.set(\"contactId\", jsonData.id);",
+                  "    pm.collectionVariables.set(\"contactId\", jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"directory_type\": \"personal\",\n  \"first_name\": \"Sarah\",\n  \"last_name\": \"Connor\",\n  \"email\": \"sarah@example.com\",\n  \"notes\": \"VIP Client from Sector 4\",\n  \"is_favorite\": true,\n  \"numbers\": [\n    {\n      \"number\": \"+12025550111\",\n      \"label\": \"Work\",\n      \"is_primary\": true\n    },\n    {\n      \"number\": \"+12025550122\",\n      \"label\": \"Mobile\"\n    },\n    {\n      \"number\": \"1004\",\n      \"label\": \"Direct Desk\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/contacts/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Company Directory Contact (Admin Only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () { pm.response.to.have.status(201); });",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.environment.set(\"contactId\", jsonData.id);",
+                  "    pm.collectionVariables.set(\"contactId\", jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"directory_type\": \"company\",\n  \"first_name\": \"General\",\n  \"last_name\": \"Support\",\n  \"email\": \"support@acme.com\",\n  \"notes\": \"Main reception and support queue\",\n  \"is_favorite\": false,\n  \"numbers\": [\n    {\n      \"number\": \"1000\",\n      \"label\": \"Switchboard\",\n      \"is_primary\": true\n    },\n    {\n      \"number\": \"+18005550199\",\n      \"label\": \"Toll Free\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/contacts/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Contact Detail",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/{{contactId}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                "{{contactId}}",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Contact (PUT - Full Replace)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"directory_type\": \"personal\",\n  \"first_name\": \"Sarah\",\n  \"last_name\": \"Connor\",\n  \"email\": \"sarah.connor@resistance.org\",\n  \"notes\": \"Updated contact details and numbers\",\n  \"is_favorite\": true,\n  \"numbers\": [\n    {\n      \"number\": \"+12025550199\",\n      \"label\": \"Direct\",\n      \"is_primary\": true\n    },\n    {\n      \"number\": \"+12025550188\",\n      \"label\": \"Emergency Mobile\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/contacts/{{contactId}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                "{{contactId}}",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Contact (PATCH - Partial)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_favorite\": true,\n  \"notes\": \"Priority VIP Client\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/contacts/{{contactId}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                "{{contactId}}",
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Contact",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/{{contactId}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "contacts",
+                "{{contactId}}",
+                ""
               ]
             }
           }

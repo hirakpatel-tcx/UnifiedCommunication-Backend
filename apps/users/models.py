@@ -132,6 +132,24 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="Designates whether the user can log into the Django admin site.",
     )
+    is_first_login = models.BooleanField(
+        default=True,
+        help_text="Designates whether this user has never logged in before.",
+    )
+    must_change_password = models.BooleanField(
+        default=True,
+        help_text="Designates whether the user is required to change their password upon login.",
+    )
+    first_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+    )
+    last_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+    )
 
     # ------------------------------------------------------------------
     # SIP Domain (per-user override; falls back to tenant.sip_domain)
