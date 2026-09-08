@@ -157,14 +157,13 @@ class FreeSwitchWebhookView(APIView):
                 else:
                     ext = Extension.objects.filter(tenant=tenant, freeswitch_object_id=object_id).first()
 
-                    raw_num = fs_data.get("extension_number") or fs_data.get("phone")
-                    raw_sip_pw = fs_data.get("sip_password") or fs_data.get("password")
+                    raw_sip_pw = fs_data.get("password") or fs_data.get("sip_password")
                     raw_sip_user = fs_data.get("sip_username")
                     raw_transport = fs_data.get("transport_type") or fs_data.get("transport")
 
                     if ext:
-                        if raw_num:
-                            ext.extension_number = str(raw_num)[:20]
+                        # extension_number is not present in the FreeSWITCH extension
+                        # payload (only sip_username) — left untouched on update.
                         if raw_sip_user:
                             ext.sip_username = str(raw_sip_user)
                         if raw_transport:
@@ -174,7 +173,7 @@ class FreeSwitchWebhookView(APIView):
                         ext.save()
                         logger.info("Extension %s synced from FreeSWITCH for tenant %s", ext.extension_number, tenant.tenant_code)
                     else:
-                        ext_num = str(raw_num)[:20] if raw_num else f"ext-{object_id[:8]}"
+                        ext_num = f"ext-{object_id[:8]}"
                         sip_user = raw_sip_user or f"{ext_num}-{tenant.tenant_code}"
                         transport = raw_transport or "TLS"
                         enc_pw = SecretService.encrypt(raw_sip_pw) if raw_sip_pw else ""

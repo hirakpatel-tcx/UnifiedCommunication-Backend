@@ -34,12 +34,15 @@ class Command(BaseCommand):
 
         if not code:
             self.stdout.write("")
-            self.stdout.write(f"{'#':<4}{'Code':<12}{'Name':<30}{'Active':<8}{'Has Key':<8}")
-            self.stdout.write("-" * 62)
+            self.stdout.write(
+                f"{'#':<4}{'Code':<12}{'Name':<30}{'Active':<8}{'Has Key':<8}{'FreeSWITCH UUID':<38}"
+            )
+            self.stdout.write("-" * 100)
             for i, t in enumerate(tenants, start=1):
                 self.stdout.write(
                     f"{i:<4}{t.tenant_code:<12}{t.tenant_name[:28]:<30}"
                     f"{str(t.is_active):<8}{str(bool(t.encrypted_api_key)):<8}"
+                    f"{str(t.freeswitch_tenant_uuid or ''):<38}"
                 )
             self.stdout.write("")
 
@@ -74,5 +77,6 @@ class Command(BaseCommand):
             return
 
         self.stdout.write("")
-        self.stdout.write(f"Tenant:  {tenant.tenant_code} ({tenant.id})")
-        self.stdout.write(f"API key: {api_key}")
+        self.stdout.write(f"Tenant:           {tenant.tenant_code} ({tenant.id})")
+        self.stdout.write(f"FreeSWITCH UUID:  {tenant.freeswitch_tenant_uuid or '(not set)'}")
+        self.stdout.write(f"API key:          {api_key}")
