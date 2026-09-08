@@ -61,7 +61,7 @@ class Extension(TimestampedModel):
 
     Webhook sync:
       extension.created — data present in webhook → store without FreeSWITCH call
-      extension.updated — call FreeSWITCH API → sync (PLACEHOLDER until API docs)
+      extension.updated — call FreeSWITCH API (GET .../extensions/{object_id}/) → sync
       extension.deleted — DO NOT call FreeSWITCH → delete local record
     """
 

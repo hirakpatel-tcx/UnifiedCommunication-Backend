@@ -24,6 +24,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.services.secret_service import SecretService
 from apps.dids.models import DID
 from apps.extensions.models import Extension
@@ -144,7 +145,51 @@ class FreeSwitchWebhookView(APIView):
         # ------------------------------------------------------------------
         # 2. extension.created / extension.updated / extension.deleted
         # ------------------------------------------------------------------
-        elif event_type in ("extension.created", "extension.updated") and object_id:
+        elif event_type == "extension.updated" and object_id:
+            tenant = resolve_or_create_tenant(auto_create=True)
+            if tenant:
+                fs_data = FreeSwitchClientService.get_resource(tenant, f"extensions/{object_id}/")
+                if fs_data is None:
+                    logger.error(
+                        "extension.updated: failed to fetch extension %s from FreeSWITCH for tenant %s; skipping sync",
+                        object_id, tenant.tenant_code,
+                    )
+                else:
+                    ext = Extension.objects.filter(tenant=tenant, freeswitch_object_id=object_id).first()
+
+                    raw_num = fs_data.get("extension_number") or fs_data.get("phone")
+                    raw_sip_pw = fs_data.get("sip_password") or fs_data.get("password")
+                    raw_sip_user = fs_data.get("sip_username")
+                    raw_transport = fs_data.get("transport_type") or fs_data.get("transport")
+
+                    if ext:
+                        if raw_num:
+                            ext.extension_number = str(raw_num)[:20]
+                        if raw_sip_user:
+                            ext.sip_username = str(raw_sip_user)
+                        if raw_transport:
+                            ext.transport_type = str(raw_transport)
+                        if raw_sip_pw:
+                            ext.encrypted_sip_password = SecretService.encrypt(raw_sip_pw)
+                        ext.save()
+                        logger.info("Extension %s synced from FreeSWITCH for tenant %s", ext.extension_number, tenant.tenant_code)
+                    else:
+                        ext_num = str(raw_num)[:20] if raw_num else f"ext-{object_id[:8]}"
+                        sip_user = raw_sip_user or f"{ext_num}-{tenant.tenant_code}"
+                        transport = raw_transport or "TLS"
+                        enc_pw = SecretService.encrypt(raw_sip_pw) if raw_sip_pw else ""
+
+                        ext = Extension.objects.create(
+                            tenant=tenant,
+                            freeswitch_object_id=object_id,
+                            extension_number=ext_num,
+                            sip_username=sip_user,
+                            transport_type=transport,
+                            encrypted_sip_password=enc_pw,
+                        )
+                        logger.info("Extension %s created from FreeSWITCH sync for tenant %s", ext.extension_number, tenant.tenant_code)
+
+        elif event_type == "extension.created" and object_id:
             tenant = resolve_or_create_tenant(auto_create=True)
             if tenant:
                 ext = Extension.objects.filter(tenant=tenant, freeswitch_object_id=object_id).first()

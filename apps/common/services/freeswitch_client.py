@@ -138,6 +138,41 @@ class FreeSwitchClientService:
             )
 
     @classmethod
+    def get_resource(
+        cls,
+        tenant: Tenant,
+        endpoint_path: str,
+        params: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """
+        Fetches a single resource from FreeSWITCH and returns the parsed JSON body,
+        or None on any failure (connection error, timeout, non-2xx, unparsable body).
+        For internal (non-request-scoped) callers such as webhook handlers.
+        """
+        api_key = cls.get_decrypted_api_key(tenant)
+        url = cls.build_url(tenant, endpoint_path)
+        headers = {
+            "Authorization": f"ApiKey {api_key}",
+            "Accept": "application/json",
+        }
+        timeout = getattr(settings, "FREESWITCH_API_TIMEOUT_SECONDS", 30.0)
+        clean_params = {k: v for k, v in (params or {}).items() if v is not None}
+
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.get(url, headers=headers, params=clean_params or None)
+                if resp.status_code >= 400:
+                    logger.error(
+                        "FreeSWITCH get_resource non-2xx from %s: status=%s body=%s",
+                        url, resp.status_code, resp.text,
+                    )
+                    return None
+                return resp.json()
+        except Exception as err:
+            logger.error("FreeSWITCH get_resource error from %s: %s", url, err, exc_info=True)
+            return None
+
+    @classmethod
     def proxy_stream(
         cls,
         tenant: Tenant,
