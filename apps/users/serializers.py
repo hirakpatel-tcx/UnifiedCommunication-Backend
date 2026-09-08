@@ -16,6 +16,7 @@ from apps.dids.models import DID, UserDID
 from apps.extensions.models import Extension
 from apps.tenants.models import Tenant
 from apps.users.models import User, UserRole
+from apps.users.utils import generate_temp_password
 from apps.users.validators import validate_fax_boxes, validate_voicemail_boxes
 
 
@@ -88,6 +89,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
             "dids",
             "fax_boxes",
             "voicemail_boxes",
+            "is_first_login",
+            "must_change_password",
             "created_at",
         ]
 
@@ -186,6 +189,24 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, style={"input_type": "password"})
+    new_password = serializers.CharField(write_only=True, min_length=8, style={"input_type": "password"})
+
+    def validate_current_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
+
+    def save(self, **kwargs):
+        user = self.context["request"].user
+        user.set_password(self.validated_data["new_password"])
+        user.must_change_password = False
+        user.save(update_fields=["password", "must_change_password"])
+        return user
+
+
 # ---------------------------------------------------------------------------
 # Unified User Provisioning & Update Serializer (One API for all)
 # ---------------------------------------------------------------------------
@@ -242,6 +263,9 @@ class UserUpsertSerializer(serializers.ModelSerializer):
     - Voicemail boxes
     """
     password = serializers.CharField(write_only=True, required=False, style={"input_type": "password"})
+    must_change_password = serializers.BooleanField(required=False, default=True)
+    notify = serializers.BooleanField(write_only=True, required=False, default=False)
+    generate_temp_password = serializers.BooleanField(write_only=True, required=False, default=False)
     tenant_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     sip_domain = serializers.CharField(required=False, allow_blank=True, default="")
     extension_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -259,6 +283,9 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "tenant_id",
             "sip_domain",
             "is_active",
+            "must_change_password",
+            "notify",
+            "generate_temp_password",
             "extension_id",
             "did_ids",
             "fax_boxes",
@@ -305,8 +332,16 @@ class UserUpsertSerializer(serializers.ModelSerializer):
 
         extension_ref = validated_data.pop("extension_id", None)
         did_refs = validated_data.pop("did_ids", None)
-        raw_password = validated_data.pop("password")
+        raw_password = validated_data.pop("password", None)
         raw_tenant = validated_data.pop("tenant_id", None)
+        validated_data.pop("notify", None)
+        validated_data.pop("generate_temp_password", None)
+
+        is_temp_password = not raw_password
+        if is_temp_password:
+            raw_password = generate_temp_password()
+            validated_data["must_change_password"] = True
+        validated_data["is_first_login"] = True
 
         # Resolve tenant
         tenant = None
@@ -347,6 +382,10 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             tenant=tenant,
             **validated_data
         )
+        # Not persisted on the model — used only by the view to trigger the
+        # welcome email, then discarded.
+        user._plaintext_password = raw_password
+        user._is_temp_password = is_temp_password
 
         # Handle Extension assignment
         if extension_ref is not None:
@@ -389,6 +428,23 @@ class UserUpsertSerializer(serializers.ModelSerializer):
 
         raw_password = validated_data.pop("password", None)
         raw_tenant = validated_data.pop("tenant_id", None)
+        notify = validated_data.pop("notify", False)
+        should_generate_temp = validated_data.pop("generate_temp_password", False)
+
+        instance._plaintext_password = None
+        instance._is_temp_password = False
+        instance._should_notify = False
+
+        if should_generate_temp:
+            raw_password = generate_temp_password()
+            validated_data["must_change_password"] = True
+            instance._plaintext_password = raw_password
+            instance._is_temp_password = True
+            instance._should_notify = True
+        elif raw_password:
+            instance._plaintext_password = raw_password
+            instance._is_temp_password = False
+            instance._should_notify = notify
 
         if raw_password:
             instance.set_password(raw_password)
@@ -450,6 +506,47 @@ class UserUpsertSerializer(serializers.ModelSerializer):
                     UserDID.objects.get_or_create(user=instance, did=d)
 
         return instance
+
+
+class UserInviteSerializer(UserUpsertSerializer):
+    """
+    Creates a user the same way as UserUpsertSerializer, but never accepts a
+    manual password: a temporary password is always generated and emailed,
+    and the user is always required to change it on first login.
+    """
+    password = None
+    must_change_password = None
+    notify = None
+    generate_temp_password = None
+
+    class Meta(UserUpsertSerializer.Meta):
+        fields = [
+            f for f in UserUpsertSerializer.Meta.fields
+            if f not in ("password", "must_change_password", "notify", "generate_temp_password")
+        ]
+
+    def validate(self, attrs):
+        if not self.instance and not attrs.get("email"):
+            raise serializers.ValidationError({"email": "Email is required when creating a user."})
+        if self.instance:
+            raise serializers.ValidationError({"detail": "This endpoint only supports creating users."})
+        email = attrs["email"].strip().lower()
+        if User.objects.filter(email=email).exists():
+            raise serializers.ValidationError({"email": "A user with this email already exists."})
+
+        if "fax_boxes" in attrs and attrs["fax_boxes"] is not None:
+            try:
+                validate_fax_boxes(attrs["fax_boxes"])
+            except DjangoValidationError as e:
+                raise serializers.ValidationError({"fax_boxes": e.messages})
+
+        if "voicemail_boxes" in attrs and attrs["voicemail_boxes"] is not None:
+            try:
+                validate_voicemail_boxes(attrs["voicemail_boxes"])
+            except DjangoValidationError as e:
+                raise serializers.ValidationError({"voicemail_boxes": e.messages})
+
+        return attrs
 
 
 # ---------------------------------------------------------------------------

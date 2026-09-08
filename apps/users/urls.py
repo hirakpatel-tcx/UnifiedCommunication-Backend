@@ -2,6 +2,7 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.users.views import (
+    ChangePasswordView,
     CurrentUserView,
     LoginView,
     LogoutView,
@@ -11,6 +12,7 @@ from apps.users.views import (
     UserExtensionTransportView,
     UserExtensionView,
     UserFaxBoxView,
+    UserInviteCreateView,
     UserListCreateView,
     UserVoicemailBoxView,
 )
@@ -21,11 +23,13 @@ auth_urlpatterns = [
     path("logout/", LogoutView.as_view(), name="auth-logout"),
     path("token/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
     path("me/", CurrentUserView.as_view(), name="auth-me"),
+    path("change-password/", ChangePasswordView.as_view(), name="auth-change-password"),
 ]
 
 # User management endpoints: /api/v1/users/
 user_urlpatterns = [
     path("", UserListCreateView.as_view(), name="user-list-create"),
+    path("invite/", UserInviteCreateView.as_view(), name="user-invite-create"),
     path("<uuid:id>/", UserDetailView.as_view(), name="user-detail"),
     path("<uuid:id>/sip-credentials/", SipCredentialsView.as_view(), name="user-sip-credentials"),
     # Resource assignments

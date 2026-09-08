@@ -17,12 +17,15 @@ from apps.common.services.secret_service import SecretService
 from apps.dids.models import DID, UserDID
 from apps.extensions.models import Extension
 from apps.users.models import User
+from apps.users.tasks import send_welcome_email
 from apps.users.serializers import (
+    ChangePasswordSerializer,
     DIDAssignSerializer,
     ExtensionAssignSerializer,
     FaxBoxAssignSerializer,
     LoginSerializer,
     UserDetailSerializer,
+    UserInviteSerializer,
     UserUpsertSerializer,
     VoicemailBoxAssignSerializer,
 )
@@ -48,6 +51,9 @@ class LoginView(APIView):
 
         user_data = UserDetailSerializer(user).data
 
+        if user.is_first_login:
+            User.objects.filter(id=user.id).update(is_first_login=False)
+
         return Response(
             {
                 "access": str(refresh.access_token),
@@ -56,6 +62,20 @@ class LoginView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ChangePasswordView(APIView):
+    """
+    POST /api/v1/auth/change-password/
+    Self-service password change. Clears must_change_password on success.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):
@@ -144,6 +164,41 @@ class UserListCreateView(generics.ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+
+        send_welcome_email.delay(
+            email=user.email,
+            plaintext_password=user._plaintext_password,
+            is_temp_password=user._is_temp_password,
+            first_name=user.first_name,
+        )
+
+        fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)
+        user_data = UserDetailSerializer(fresh_user).data
+        return Response(user_data, status=status.HTTP_201_CREATED)
+
+
+class UserInviteCreateView(generics.CreateAPIView):
+    """
+    POST /api/v1/users/invite/
+    Creates a user (same provisioning as UserListCreateView) without accepting
+    a manual password: a temporary password is always generated and emailed,
+    and the user is always required to change it on first login.
+    """
+    permission_classes = [IsAdminOrSuperAdmin]
+    serializer_class = UserInviteSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        send_welcome_email.delay(
+            email=user.email,
+            plaintext_password=user._plaintext_password,
+            is_temp_password=True,
+            first_name=user.first_name,
+        )
+
         fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)
         user_data = UserDetailSerializer(fresh_user).data
         return Response(user_data, status=status.HTTP_201_CREATED)
@@ -178,6 +233,15 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+
+        if getattr(user, "_should_notify", False):
+            send_welcome_email.delay(
+                email=user.email,
+                plaintext_password=user._plaintext_password,
+                is_temp_password=user._is_temp_password,
+                first_name=user.first_name,
+            )
+
         fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)
         user_data = UserDetailSerializer(fresh_user).data
         return Response(user_data, status=status.HTTP_200_OK)

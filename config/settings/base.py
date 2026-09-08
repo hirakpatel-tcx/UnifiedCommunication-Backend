@@ -195,15 +195,6 @@ CELERY_WORKER_MAX_TASKS_PER_CHILD = env.int("CELERY_WORKER_MAX_TASKS_PER_CHILD",
 CELERY_WORKER_MAX_MEMORY_PER_CHILD = env.int("CELERY_WORKER_MAX_MEMORY_PER_CHILD", default=200000)  # 200MB baseline
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
-# Outbox dispatcher: polls for pending OutboxEvent rows and publishes them
-# to Django Channels. Short interval since delivery should feel near-real-time.
-CELERY_BEAT_SCHEDULE = {
-    "dispatch-pending-outbox-events": {
-        "task": "apps.outbox.tasks.dispatch_pending_outbox_events",
-        "schedule": 2.0,
-    },
-}
-
 # ---------------------------------------------------------------------------
 # Password validation
 # ---------------------------------------------------------------------------
@@ -301,6 +292,7 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_HEADERS = [
     "accept",
     "accept-encoding",
+    "apikey",
     "authorization",
     "content-type",
     "dnt",
@@ -362,3 +354,8 @@ EMAIL_USE_SSL = env.bool("EMAIL_USE_SSL", default=False)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="TCX Connect <noreply@tcxconnect.tech>")
+
+# ---------------------------------------------------------------------------
+# Frontend
+# ---------------------------------------------------------------------------
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
