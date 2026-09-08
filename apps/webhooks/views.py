@@ -180,7 +180,7 @@ class FreeSwitchWebhookView(APIView):
                                 target_type=OutboxTargetType.USER,
                                 target_id=str(ext.user_id),
                                 event_type="extension.updated",
-                                payload={"extension_id": str(ext.id), "requires_refresh": True},
+                                payload={"extension_id": str(ext.id), "requires_refresh": True, "reflect": True},
                             )
                     else:
                         ext_num = f"ext-{object_id[:8]}"
@@ -277,7 +277,7 @@ class FreeSwitchWebhookView(APIView):
                             target_type=OutboxTargetType.USER,
                             target_id=str(user_id),
                             event_type="did.updated",
-                            payload={"did_id": str(did.id), "requires_refresh": True},
+                            payload={"did_id": str(did.id), "requires_refresh": True, "reflect": True},
                         )
                         for user_id in assigned_user_ids
                     ])
