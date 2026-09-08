@@ -195,6 +195,15 @@ CELERY_WORKER_MAX_TASKS_PER_CHILD = env.int("CELERY_WORKER_MAX_TASKS_PER_CHILD",
 CELERY_WORKER_MAX_MEMORY_PER_CHILD = env.int("CELERY_WORKER_MAX_MEMORY_PER_CHILD", default=200000)  # 200MB baseline
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
+# Outbox dispatcher: polls for pending OutboxEvent rows and publishes them
+# to Django Channels. Short interval since delivery should feel near-real-time.
+CELERY_BEAT_SCHEDULE = {
+    "dispatch-pending-outbox-events": {
+        "task": "apps.outbox.tasks.dispatch_pending_outbox_events",
+        "schedule": 2.0,
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Password validation
 # ---------------------------------------------------------------------------

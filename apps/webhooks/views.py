@@ -26,8 +26,9 @@ from rest_framework.views import APIView
 
 from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.services.secret_service import SecretService
-from apps.dids.models import DID
+from apps.dids.models import DID, UserDID
 from apps.extensions.models import Extension
+from apps.outbox.models import OutboxEvent, OutboxTargetType
 from apps.tenants.models import Tenant
 from apps.webhooks.models import ProcessingStatus, WebhookLog
 
@@ -172,6 +173,15 @@ class FreeSwitchWebhookView(APIView):
                             ext.encrypted_sip_password = SecretService.encrypt(raw_sip_pw)
                         ext.save()
                         logger.info("Extension %s synced from FreeSWITCH for tenant %s", ext.extension_number, tenant.tenant_code)
+
+                        if ext.user_id:
+                            OutboxEvent.objects.create(
+                                tenant=tenant,
+                                target_type=OutboxTargetType.USER,
+                                target_id=str(ext.user_id),
+                                event_type="extension.updated",
+                                payload={"extension_id": str(ext.id), "requires_refresh": True},
+                            )
                     else:
                         ext_num = f"ext-{object_id[:8]}"
                         sip_user = raw_sip_user or f"{ext_num}-{tenant.tenant_code}"
@@ -233,8 +243,14 @@ class FreeSwitchWebhookView(APIView):
                 count, _ = Extension.objects.filter(tenant=tenant, freeswitch_object_id=object_id).delete()
                 logger.info("Extension %s deleted for tenant %s (count=%s)", object_id, tenant.tenant_code, count)
             else:
-                count, _ = Extension.objects.filter(freeswitch_object_id=object_id).delete()
-                logger.info("Extension %s deleted globally (count=%s)", object_id, count)
+                # freeswitch_object_id is only unique within a tenant, so without a
+                # resolved tenant we cannot safely delete without risking a
+                # cross-tenant match. Skip and log for investigation instead.
+                logger.error(
+                    "extension.deleted: could not resolve tenant (tenant_id=%s tenant_code=%s); "
+                    "skipping deletion of extension %s to avoid cross-tenant match",
+                    tenant_id, tenant_code, object_id,
+                )
 
         # ------------------------------------------------------------------
         # 3. did.created / did.updated / did.deleted
@@ -253,6 +269,18 @@ class FreeSwitchWebhookView(APIView):
                         did.name = str(raw_name)[:255]
                     did.save()
                     logger.info("DID %s (%s) updated for tenant %s", did.number, did.name, tenant.tenant_code)
+
+                    assigned_user_ids = UserDID.objects.filter(did=did).values_list("user_id", flat=True)
+                    OutboxEvent.objects.bulk_create([
+                        OutboxEvent(
+                            tenant=tenant,
+                            target_type=OutboxTargetType.USER,
+                            target_id=str(user_id),
+                            event_type="did.updated",
+                            payload={"did_id": str(did.id), "requires_refresh": True},
+                        )
+                        for user_id in assigned_user_ids
+                    ])
                 else:
                     did_num = str(raw_num)[:20] if raw_num else f"did-{object_id[:8]}"
                     did_name = str(raw_name)[:255] if raw_name else ""
@@ -270,8 +298,14 @@ class FreeSwitchWebhookView(APIView):
                 count, _ = DID.objects.filter(tenant=tenant, freeswitch_object_id=object_id).delete()
                 logger.info("DID %s deleted for tenant %s (count=%s)", object_id, tenant.tenant_code, count)
             else:
-                count, _ = DID.objects.filter(freeswitch_object_id=object_id).delete()
-                logger.info("DID %s deleted globally (count=%s)", object_id, count)
+                # freeswitch_object_id is only unique within a tenant, so without a
+                # resolved tenant we cannot safely delete without risking a
+                # cross-tenant match. Skip and log for investigation instead.
+                logger.error(
+                    "did.deleted: could not resolve tenant (tenant_id=%s tenant_code=%s); "
+                    "skipping deletion of DID %s to avoid cross-tenant match",
+                    tenant_id, tenant_code, object_id,
+                )
 
         # ------------------------------------------------------------------
         # Sanitize secrets before storing in WebhookLog

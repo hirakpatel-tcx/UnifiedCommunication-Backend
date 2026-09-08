@@ -9,8 +9,8 @@ Design decisions:
   and can be re-dispatched without re-running the business logic.
 
 - CRITICAL: target_type must ALWAYS be explicit. It is NEVER null.
-  "user"   → send only to user:{target_id} channel group
-  "tenant" → send to tenant:{target_id} group (explicitly authorized only;
+  "user"   → send only to user.{target_id} channel group
+  "tenant" → send to tenant.{target_id} group (explicitly authorized only;
               never the default behavior)
 
   There is NO "broadcast to all" by leaving target_user null or
@@ -68,8 +68,8 @@ class OutboxEvent(UUIDModel):
     Picked up by the Celery outbox worker and published to Django Channels.
 
     target_type + target_id determine the channel group:
-      user:   "user:{target_id}"    → personal channel
-      tenant: "tenant:{target_id}"  → tenant-wide channel (requires explicit auth)
+      user:   "user.{target_id}"    → personal channel
+      tenant: "tenant.{target_id}"  → tenant-wide channel (requires explicit auth)
 
     Security:
     - payload must contain only normalized, non-sensitive application data.
@@ -92,8 +92,8 @@ class OutboxEvent(UUIDModel):
         choices=OutboxTargetType.choices,
         help_text=(
             "Explicit delivery target type. NEVER null. "
-            "'user'   → channel group: user:{target_id} "
-            "'tenant' → channel group: tenant:{target_id} "
+            "'user'   → channel group: user.{target_id} "
+            "'tenant' → channel group: tenant.{target_id} "
             "Tenant-wide events require explicit authorization at dispatch time."
         ),
     )
