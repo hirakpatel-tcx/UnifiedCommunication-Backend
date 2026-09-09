@@ -168,6 +168,12 @@ class Tenant(TimestampedModel):
         db_index=True,
         help_text="Inactive tenants are disabled system-wide.",
     )
+    telnyx_messaging_profile_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Telnyx Messaging Profile ID used to send SMS/MMS on behalf of this tenant.",
+    )
 
     class Meta:
         db_table = "tenants"

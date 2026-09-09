@@ -30,6 +30,9 @@ urlpatterns = [
     # Voicemail Proxy
     path("voicemail/", include("apps.voicemail.urls")),
 
+    # Messaging (SMS/MMS via Telnyx)
+    path("messaging/", include("apps.messaging.urls")),
+
     # 6. Fax Proxy
     path("fax/", include("apps.common.fax_urls")),
 

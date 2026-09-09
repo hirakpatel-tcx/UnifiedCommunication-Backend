@@ -13,10 +13,14 @@ Architectural Invariants:
 4. Idempotency: WebhookLog stores provider_timestamp, event_type, object_id.
 """
 
+import base64
 import copy
 import logging
 from datetime import datetime
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from django.conf import settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import generics, permissions, status
@@ -28,6 +32,8 @@ from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.services.secret_service import SecretService
 from apps.dids.models import DID, UserDID
 from apps.extensions.models import Extension
+from apps.messaging.models import Message, MessageDirection, MessageStatus
+from apps.messaging.services import resolve_conversation
 from apps.outbox.models import OutboxEvent, OutboxTargetType
 from apps.tenants.models import Tenant
 from apps.webhooks.models import ProcessingStatus, WebhookLog
@@ -340,6 +346,129 @@ class FreeSwitchWebhookView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+class TelnyxWebhookView(APIView):
+    """
+    Receives inbound Telnyx messaging webhooks (message.sent,
+    message.finalized, message.received).
+
+    Verifies the Ed25519 signature per Telnyx's webhook spec:
+    https://developers.telnyx.com/docs/messaging/webhooks#authenticity
+    header `telnyx-signature-ed25519` signs `{telnyx-timestamp}|{raw body}`.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def _verify_signature(self, request) -> bool:
+        public_key_b64 = getattr(settings, "TELNYX_PUBLIC_KEY", "")
+        if not public_key_b64:
+            logger.error("TELNYX_PUBLIC_KEY is not configured; rejecting webhook.")
+            return False
+
+        signature_b64 = request.headers.get("telnyx-signature-ed25519")
+        timestamp = request.headers.get("telnyx-timestamp")
+        if not signature_b64 or not timestamp:
+            return False
+
+        try:
+            public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_b64))
+            signature = base64.b64decode(signature_b64)
+            signed_payload = f"{timestamp}|".encode() + request.body
+            public_key.verify(signature, signed_payload)
+            return True
+        except (InvalidSignature, ValueError, TypeError) as err:
+            logger.error("Telnyx webhook signature verification failed: %s", err)
+            return False
+
+    def post(self, request, *args, **kwargs):
+        if not self._verify_signature(request):
+            return Response({"detail": "Invalid signature."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        envelope = request.data if isinstance(request.data, dict) else {}
+        payload = envelope.get("data", {}) if isinstance(envelope.get("data"), dict) else {}
+        event_type = payload.get("event_type", "unknown")
+        message_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        telnyx_message_id = message_payload.get("id", "")
+
+        if event_type in ("message.sent", "message.finalized"):
+            self._handle_status_update(message_payload)
+        elif event_type == "message.received":
+            self._handle_inbound_message(message_payload)
+
+        log_entry = WebhookLog.objects.create(
+            provider="telnyx",
+            event_type=event_type,
+            object_id=telnyx_message_id or None,
+            payload=envelope,
+            processing_status=ProcessingStatus.PENDING,
+        )
+
+        logger.info("Telnyx webhook logged: id=%s event=%s message_id=%s", log_entry.id, event_type, telnyx_message_id)
+
+        return Response({"status": "accepted", "event": event_type}, status=status.HTTP_202_ACCEPTED)
+
+    def _handle_status_update(self, message_payload: dict):
+        telnyx_message_id = message_payload.get("id")
+        if not telnyx_message_id:
+            return
+
+        message = Message.objects.filter(telnyx_message_id=telnyx_message_id).first()
+        if not message:
+            return
+
+        errors = message_payload.get("errors") or []
+        telnyx_status = message_payload.get("to", [{}])[0].get("status") if message_payload.get("to") else None
+        telnyx_status = telnyx_status or message_payload.get("status")
+
+        if errors:
+            message.status = MessageStatus.FAILED
+            message.error_code = str(errors[0].get("code", ""))
+            message.error_detail = errors[0].get("detail", "")
+        elif telnyx_status == "delivered":
+            message.status = MessageStatus.DELIVERED
+            message.delivered_at = timezone.now()
+        elif telnyx_status in ("sent", "sending_failed", "delivery_failed"):
+            message.status = MessageStatus.SENT if telnyx_status == "sent" else MessageStatus.FAILED
+
+        message.save(update_fields=["status", "error_code", "error_detail", "delivered_at", "updated_at"])
+
+    def _handle_inbound_message(self, message_payload: dict):
+        from_number = (message_payload.get("from") or {}).get("phone_number", "")
+        to_entries = message_payload.get("to") or []
+        to_numbers = [entry.get("phone_number") for entry in to_entries if entry.get("phone_number")]
+        if not from_number or not to_numbers:
+            logger.error("message.received missing from/to numbers: %s", message_payload)
+            return
+
+        did_number = to_numbers[0]
+        did = DID.objects.filter(number=did_number).select_related("tenant").first()
+        if not did:
+            logger.error("message.received: no DID found for number %s", did_number)
+            return
+
+        tenant = did.tenant
+        participant_numbers = [from_number] + [n for n in to_numbers if n != did_number]
+
+        conversation = resolve_conversation(tenant, did, participant_numbers)
+
+        media = message_payload.get("media") or []
+        media_urls = [m.get("url") for m in media if m.get("url")]
+
+        Message.objects.create(
+            conversation=conversation,
+            tenant=tenant,
+            did=did,
+            direction=MessageDirection.INBOUND,
+            from_number=from_number,
+            body=message_payload.get("text", ""),
+            media_urls=media_urls,
+            telnyx_message_id=message_payload.get("id"),
+            status=MessageStatus.RECEIVED,
+        )
+
+        conversation.last_message_at = timezone.now()
+        conversation.save(update_fields=["last_message_at", "updated_at"])
 
 
 class WebhookLogListView(generics.ListAPIView):

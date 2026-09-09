@@ -71,6 +71,7 @@ LOCAL_APPS = [
     "apps.audit.apps.AuditConfig",
     "apps.outbox.apps.OutboxConfig",
     "apps.contacts.apps.ContactsConfig",
+    "apps.messaging.apps.MessagingConfig",
 ]
 
 INSTALLED_APPS = LOCAL_APPS + THIRD_PARTY_APPS + DJANGO_APPS
@@ -286,6 +287,14 @@ ENCRYPTION_KEY = env("ENCRYPTION_KEY")
 FREESWITCH_CLIENT_API_BASE_URL = env("FREESWITCH_CLIENT_API_BASE_URL", default="https://pbx.yourdomain.com/api/v1/client")
 FREESWITCH_MASTER_KEY = env("FREESWITCH_MASTER_KEY", default="")
 FREESWITCH_API_TIMEOUT_SECONDS = env.float("FREESWITCH_API_TIMEOUT_SECONDS", default=30.0)
+
+# ---------------------------------------------------------------------------
+# Telnyx Messaging (SMS/MMS)
+# ---------------------------------------------------------------------------
+TELNYX_API_BASE_URL = env("TELNYX_API_BASE_URL", default="https://api.telnyx.com")
+TELNYX_API_KEY = env("TELNYX_API_KEY", default="")
+TELNYX_PUBLIC_KEY = env("TELNYX_PUBLIC_KEY", default="")
+TELNYX_API_TIMEOUT_SECONDS = env.float("TELNYX_API_TIMEOUT_SECONDS", default=30.0)
 
 # ---------------------------------------------------------------------------
 # CORS (Cross-Origin Resource Sharing)
