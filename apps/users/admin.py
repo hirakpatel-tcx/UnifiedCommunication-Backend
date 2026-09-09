@@ -21,11 +21,12 @@ class UserDIDInline(admin.TabularInline):
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ("email", "tenant", "role", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
+    list_display = ("email", "first_name", "last_name", "tenant", "role", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
     list_filter = ("role", "is_staff", "is_superuser", "is_active", "tenant")
     inlines = [ExtensionInline, UserDIDInline]
     fieldsets = (
         (None, {"fields": ("email", "password")}),
+        ("Personal Info", {"fields": ("first_name", "last_name")}),
         ("Tenant & Role", {"fields": ("tenant", "role", "sip_domain")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Telephony Resources", {"fields": ("fax_boxes", "voicemail_boxes")}),
@@ -36,11 +37,11 @@ class UserAdmin(BaseUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("email", "password", "tenant", "role", "sip_domain", "is_staff", "is_superuser", "is_active"),
+                "fields": ("email", "first_name", "last_name", "password", "tenant", "role", "sip_domain", "is_staff", "is_superuser", "is_active"),
             },
         ),
     )
-    search_fields = ("email",)
+    search_fields = ("email", "first_name", "last_name")
     ordering = ("email",)
 
     @admin.display(description="Extension")
