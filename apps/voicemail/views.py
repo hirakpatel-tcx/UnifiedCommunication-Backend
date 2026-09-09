@@ -16,6 +16,41 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.services.freeswitch_client import FreeSwitchClientService
+from apps.contacts.services import annotate_contact_flags
+
+# Voicemail message payloads from FreeSWITCH may carry the caller's number
+# under any of these keys depending on the Cloud PBX API version; checked in
+# this priority order per record (mirrors the confirmed CDR field naming).
+_VOICEMAIL_NUMBER_FIELDS = ("caller_id_number", "caller_id_num", "cid_number", "from_number")
+
+
+def _voicemail_caller_field(record: dict):
+    return next((f for f in _VOICEMAIL_NUMBER_FIELDS if record.get(f)), _VOICEMAIL_NUMBER_FIELDS[0])
+
+
+def _annotate_voicemail_response(tenant, response: Response) -> Response:
+    """
+    Adds contact_saved/contact_id to each voicemail message record in the
+    response body, whether it's a bare list, a paginated {"results": [...]}
+    envelope, or a single-record detail dict.
+    """
+    if response.status_code != status.HTTP_200_OK:
+        return response
+
+    data = response.data
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        records = data["results"]
+    elif isinstance(data, list):
+        records = data
+    elif isinstance(data, dict):
+        records = [data]
+    else:
+        records = None
+
+    if records:
+        annotate_contact_flags(tenant, records, _voicemail_caller_field)
+
+    return response
 
 
 def _validate_voicemail_feature(tenant):
@@ -86,12 +121,13 @@ class VoicemailMessagesView(APIView):
         if scoped_boxes:
             params["voicemail_id"] = scoped_boxes
 
-        return FreeSwitchClientService.proxy_request(
+        response = FreeSwitchClientService.proxy_request(
             tenant=tenant,
             method="GET",
             endpoint_path="voicemail-messages/",
             params=params,
         )
+        return _annotate_voicemail_response(tenant, response)
 
 
 class VoicemailMessageDetailView(APIView):
@@ -107,11 +143,12 @@ class VoicemailMessageDetailView(APIView):
         if feat_err:
             return feat_err
 
-        return FreeSwitchClientService.proxy_request(
+        response = FreeSwitchClientService.proxy_request(
             tenant=tenant,
             method="GET",
             endpoint_path=f"voicemail-messages/{message_uuid}/",
         )
+        return _annotate_voicemail_response(tenant, response)
 
     def delete(self, request, message_uuid, *args, **kwargs):
         tenant = FreeSwitchClientService.get_target_tenant(request)

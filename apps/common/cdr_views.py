@@ -14,6 +14,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.services.freeswitch_client import FreeSwitchClientService
+from apps.contacts.services import annotate_contact_flags
+
+
+def _cdr_counterparty_field(record: dict) -> str:
+    """
+    The number to match against saved Contacts is whichever side of the call
+    is NOT our own extension: the caller for inbound calls, the destination
+    for outbound calls.
+    """
+    return "destination_number" if record.get("direction") == "outbound" else "caller_id_number"
 
 
 def _validate_calling_feature(tenant):
@@ -23,6 +33,32 @@ def _validate_calling_feature(tenant):
             status=status.HTTP_400_BAD_REQUEST,
         )
     return None
+
+
+def _annotate_cdr_response(tenant, response: Response) -> Response:
+    """
+    Adds contact_saved/contact_id (matched on the counterparty number) to
+    each CDR record in the response body, whether it's a bare list, a
+    paginated {"results": [...]} envelope, or a single-record detail dict.
+    """
+    if response.status_code != status.HTTP_200_OK:
+        return response
+
+    data = response.data
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        records = data["results"]
+    elif isinstance(data, list):
+        records = data
+    elif isinstance(data, dict):
+        # Single-record detail response.
+        records = [data]
+    else:
+        records = None
+
+    if records:
+        annotate_contact_flags(tenant, records, _cdr_counterparty_field)
+
+    return response
 
 
 def _apply_user_extension_scoping(request, params: dict) -> dict:
@@ -55,12 +91,13 @@ class CDRListView(APIView):
         params = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in params.items()}
         params = _apply_user_extension_scoping(request, params)
 
-        return FreeSwitchClientService.proxy_request(
+        response = FreeSwitchClientService.proxy_request(
             tenant=tenant,
             method="GET",
             endpoint_path="cdr/",
             params=params,
         )
+        return _annotate_cdr_response(tenant, response)
 
 
 class CDRDetailView(APIView):
@@ -76,11 +113,12 @@ class CDRDetailView(APIView):
         if feat_err:
             return feat_err
 
-        return FreeSwitchClientService.proxy_request(
+        response = FreeSwitchClientService.proxy_request(
             tenant=tenant,
             method="GET",
             endpoint_path=f"cdr/{xml_cdr_uuid}/",
         )
+        return _annotate_cdr_response(tenant, response)
 
 
 class CDRSummaryView(APIView):
