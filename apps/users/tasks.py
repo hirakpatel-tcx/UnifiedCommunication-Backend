@@ -12,7 +12,8 @@ import logging
 
 from celery import shared_task
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,6 @@ def send_welcome_email(email: str, plaintext_password: str, is_temp_password: bo
     - is_temp_password=True  -> "here is your temporary password, you'll be asked to change it on login"
     - is_temp_password=False -> "here is the password shared by your admin"
     """
-    login_url = f"{settings.FRONTEND_URL.rstrip('/')}/login"
     greeting = f"Hi {first_name}," if first_name else "Hi,"
 
     if is_temp_password:
@@ -37,24 +37,31 @@ def send_welcome_email(email: str, plaintext_password: str, is_temp_password: bo
         password_line = "Please use the password shared by your admin to log in."
 
     subject = "Welcome to TCX Connect — your account is ready"
-    message = (
+    context = {
+        "greeting": greeting,
+        "email": email,
+        "plaintext_password": plaintext_password,
+        "password_line": password_line,
+    }
+    text_body = (
         f"{greeting}\n\n"
         f"Your account has been created.\n\n"
         f"Email: {email}\n"
         f"Password: {plaintext_password}\n\n"
         f"{password_line}\n\n"
-        f"Log in here: {login_url}\n\n"
         "If you did not expect this email, please contact your administrator."
     )
+    html_body = render_to_string("users/email/welcome_email.html", context)
 
     try:
-        send_mail(
+        message = EmailMultiAlternatives(
             subject=subject,
-            message=message,
+            body=text_body,
             from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[email],
-            fail_silently=False,
+            to=[email],
         )
+        message.attach_alternative(html_body, "text/html")
+        message.send(fail_silently=False)
     except Exception as exc:
         logger.error("Failed to send welcome email to %s: %s", email, exc, exc_info=True)
         raise
