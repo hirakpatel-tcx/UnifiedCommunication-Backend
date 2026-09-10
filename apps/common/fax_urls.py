@@ -6,6 +6,7 @@ URL routing for Fax proxy endpoints.
 
 from django.urls import path
 from apps.common.fax_views import (
+    FaxAssignmentView,
     FaxBoxDetailView,
     FaxBoxListView,
     FaxFileCancelView,
@@ -25,6 +26,7 @@ urlpatterns = [
     path("files/<str:fax_file_uuid>/", FaxFileDetailView.as_view(), name="fax-file-detail"),
     path("files/<str:fax_file_uuid>/download/", FaxFileDownloadView.as_view(), name="fax-file-download"),
     path("files/<str:fax_file_uuid>/cancel/", FaxFileCancelView.as_view(), name="fax-file-cancel"),
+    path("files/<str:fax_file_uuid>/assignment/", FaxAssignmentView.as_view(), name="fax-file-assignment"),
 
     # Outbound Fax Send (quick-send)
     path("send/", FaxSendView.as_view(), name="fax-send"),
