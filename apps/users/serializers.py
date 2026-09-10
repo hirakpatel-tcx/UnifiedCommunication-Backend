@@ -6,6 +6,7 @@ Serializers for authentication, user management, and unified resource provisioni
 
 import uuid
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import Permission
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from rest_framework import serializers
@@ -58,6 +59,42 @@ class UserDIDSummarySerializer(serializers.ModelSerializer):
         fields = ["id", "number", "name", "did_number", "did_name"]
 
 
+class PermissionSerializer(serializers.ModelSerializer):
+    app_label = serializers.CharField(source="content_type.app_label", read_only=True)
+    model = serializers.CharField(source="content_type.model", read_only=True)
+
+    class Meta:
+        model = Permission
+        fields = ["id", "codename", "name", "app_label", "model"]
+
+
+class UserPermissionsSerializer(serializers.ModelSerializer):
+    """
+    Read/write representation of a single user's directly-assigned permissions
+    (e.g. 'add_did', 'change_userdiddepartmentassignment', 'delete_department').
+    Does not include group-inherited permissions — this endpoint manages
+    per-admin overrides, not roles.
+    """
+    permissions = PermissionSerializer(source="user_permissions", many=True, read_only=True)
+    permission_ids = serializers.PrimaryKeyRelatedField(
+        source="user_permissions",
+        queryset=Permission.objects.all(),
+        many=True,
+        write_only=True,
+    )
+
+    class Meta:
+        model = User
+        fields = ["id", "email", "role", "permissions", "permission_ids"]
+        read_only_fields = ["id", "email", "role"]
+
+    def update(self, instance, validated_data):
+        permissions = validated_data.pop("user_permissions", None)
+        if permissions is not None:
+            instance.user_permissions.set(permissions)
+        return instance
+
+
 class TenantSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
@@ -85,6 +122,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
             "last_name",
             "role",
             "is_active",
+            "is_team_lead",
             "tenant",
             "features",
             "extension",
@@ -285,6 +323,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "tenant_id",
             "sip_domain",
             "is_active",
+            "is_team_lead",
             "must_change_password",
             "notify",
             "generate_temp_password",

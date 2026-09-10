@@ -6,6 +6,7 @@ from apps.users.views import (
     CurrentUserView,
     LoginView,
     LogoutView,
+    PermissionListView,
     SipCredentialsView,
     UserDetailView,
     UserDIDView,
@@ -14,6 +15,7 @@ from apps.users.views import (
     UserFaxBoxView,
     UserInviteCreateView,
     UserListCreateView,
+    UserPermissionsView,
     UserVoicemailBoxView,
 )
 
@@ -30,7 +32,9 @@ auth_urlpatterns = [
 user_urlpatterns = [
     path("", UserListCreateView.as_view(), name="user-list-create"),
     path("invite/", UserInviteCreateView.as_view(), name="user-invite-create"),
+    path("permissions/", PermissionListView.as_view(), name="permission-list"),
     path("<uuid:id>/", UserDetailView.as_view(), name="user-detail"),
+    path("<uuid:id>/permissions/", UserPermissionsView.as_view(), name="user-permissions"),
     path("<uuid:id>/sip-credentials/", SipCredentialsView.as_view(), name="user-sip-credentials"),
     # Resource assignments
     path("<uuid:id>/extension/", UserExtensionView.as_view(), name="user-extension"),

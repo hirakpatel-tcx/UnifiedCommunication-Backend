@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.models import FaxTag, FaxTagStatus
+from apps.common.pagination import StandardPagination
 from apps.common.services.fax_tag_service import annotate_fax_tags
 from apps.common.services.freeswitch_client import FreeSwitchClientService
 
@@ -117,11 +118,56 @@ class FaxBoxDetailView(APIView):
         )
 
 
+_FAX_FETCH_ALL_PAGE_SIZE = 1000
+
+
+def _fetch_all_fax_files(tenant, base_params: dict) -> Optional[list]:
+    """
+    Pages through FreeSWITCH's fax/files/ proxy endpoint until exhausted,
+    returning the full unpaginated list of records (or None on any error).
+    Used when a filter that only exists locally (e.g. assigned_to=me) needs
+    to be applied across the whole result set rather than one proxied page.
+    """
+    all_records: list = []
+    page = 1
+
+    while True:
+        params = dict(base_params)
+        params["page"] = page
+        params["page_size"] = _FAX_FETCH_ALL_PAGE_SIZE
+
+        resp = FreeSwitchClientService.proxy_request(
+            tenant=tenant,
+            method="GET",
+            endpoint_path="fax/files/",
+            params=params,
+        )
+
+        if resp.status_code != 200 or not isinstance(resp.data, dict):
+            return None
+
+        page_records = resp.data.get("results")
+        if not isinstance(page_records, list):
+            return None
+
+        all_records.extend(page_records)
+
+        if len(page_records) < _FAX_FETCH_ALL_PAGE_SIZE:
+            break
+        page += 1
+
+    return all_records
+
+
 class FaxFileListView(APIView):
     """
     GET /api/v1/fax/files/
     Lists inbound and outbound fax transmissions.
     Query params: ?fax=...&status=received|sent|pending|failed&direction=inbound|outbound&search=...&page=...&page_size=...
+    &assigned_to=me — filters to faxes locally assigned (via FaxTag) to the requesting user.
+    Filtering by assigned_to is local-only (FreeSWITCH has no concept of it), so this
+    endpoint fetches the full unfiltered result set from FreeSWITCH, filters it here, and
+    paginates the filtered list itself — see docstring on _fetch_all_fax_files.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -135,26 +181,80 @@ class FaxFileListView(APIView):
         if err_resp:
             return err_resp
 
+        assigned_to_me = request.query_params.get("assigned_to") == "me"
+
         params = dict(request.query_params)
+        params.pop("assigned_to", None)
+        params.pop("page", None)
+        params.pop("page_size", None)
         params = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in params.items()}
 
         if scoped_fax:
             params["fax"] = scoped_fax
 
-        resp = FreeSwitchClientService.proxy_request(
-            tenant=tenant,
-            method="GET",
-            endpoint_path="fax/files/",
-            params=params,
-        )
+        if not assigned_to_me:
+            # No local-only filter requested: pass pagination straight through
+            # to FreeSWITCH as before, no need to fetch everything.
+            forward_params = dict(params)
+            for key in ("page", "page_size"):
+                value = request.query_params.get(key)
+                if value:
+                    forward_params[key] = value
 
-        if resp.status_code == 200:
-            if isinstance(resp.data, dict) and isinstance(resp.data.get("results"), list):
+            resp = FreeSwitchClientService.proxy_request(
+                tenant=tenant,
+                method="GET",
+                endpoint_path="fax/files/",
+                params=forward_params,
+            )
+
+            if resp.status_code == 200 and isinstance(resp.data, dict) and isinstance(resp.data.get("results"), list):
                 annotate_fax_tags(tenant, resp.data["results"])
-            elif isinstance(resp.data, list):
+            elif resp.status_code == 200 and isinstance(resp.data, list):
                 annotate_fax_tags(tenant, resp.data)
 
-        return resp
+            return resp
+
+        all_records = _fetch_all_fax_files(tenant, params)
+        if all_records is None:
+            return Response(
+                {"detail": "Unable to retrieve fax transmissions from PBX telephony server."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        annotate_fax_tags(tenant, all_records)
+        filtered = [
+            r for r in all_records
+            if (r.get("assigned_to") or {}).get("user_id") == str(request.user.id)
+        ]
+
+        export_all = request.query_params.get("export_all", "").lower() in ("true", "1", "yes") \
+            or request.query_params.get("export", "").lower() in ("all", "true") \
+            or request.query_params.get("all", "").lower() in ("true", "1")
+        if export_all:
+            return Response(filtered, status=status.HTTP_200_OK)
+
+        try:
+            page_num = max(int(request.query_params.get("page", 1)), 1)
+        except (TypeError, ValueError):
+            page_num = 1
+        try:
+            page_size = min(max(int(request.query_params.get("page_size", StandardPagination.page_size)), 1), StandardPagination.max_page_size)
+        except (TypeError, ValueError):
+            page_size = StandardPagination.page_size
+
+        start = (page_num - 1) * page_size
+        end = start + page_size
+
+        return Response(
+            {
+                "count": len(filtered),
+                "page": page_num,
+                "page_size": page_size,
+                "results": filtered[start:end],
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class FaxFileDetailView(APIView):

@@ -9,12 +9,15 @@ Enforces:
 - Query parameter forwarding: forwards all analytics and filtering query params.
 """
 
+from typing import Optional
+
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.contacts.services import annotate_contact_flags
+from apps.dids.models import TLGroupAccess, UserDIDDepartmentAssignment
 
 
 def _cdr_counterparty_field(record: dict) -> str:
@@ -64,13 +67,67 @@ def _annotate_cdr_response(tenant, response: Response) -> Response:
 def _apply_user_extension_scoping(request, params: dict) -> dict:
     """
     If the caller is a standard 'user', scopes queries to their assigned extension.
+    If the caller has TLGroupAccess grants (Team Lead reporting access), scopes
+    queries to the extensions of callers assigned to the granted DID/Department
+    combinations.
     """
     user = request.user
-    if not user.is_superuser and getattr(user, "role", "") == "user":
+    if user.is_superuser:
+        return params
+
+    if getattr(user, "role", "") == "user":
         ext = getattr(user, "extension", None)
         if ext and ext.extension_number:
             params["extension"] = ext.extension_number
+        return params
+
+    extensions = _resolve_tl_extensions(user)
+    if extensions is not None:
+        params["extension__in"] = ",".join(sorted(extensions))
     return params
+
+
+def _resolve_tl_extensions(user) -> Optional[set]:
+    """
+    Resolves a user's TLGroupAccess grants into the set of extension numbers
+    they are permitted to see in call logs.
+
+    CDR records carry extension_number, not department — department only
+    exists on UserDIDDepartmentAssignment (the caller's work assignment).
+    So a TL's (DID, Department) grant is resolved by finding every caller
+    assigned to that DID (and, if the grant specifies one, that department),
+    then collecting their extension numbers.
+
+    Returns None if the user has no TLGroupAccess grants at all (i.e. this
+    scoping does not apply to them and callers should fall back to their
+    existing tenant-wide behavior). Returns an empty set if the user has
+    grants but they resolve to zero extensions (e.g. no one is assigned yet).
+    """
+    grants = list(
+        TLGroupAccess.objects.filter(user=user).values_list("group_id", flat=True)
+    )
+    if not grants:
+        return None
+
+    entries = TLGroupAccess.objects.filter(user=user).values_list(
+        "group__entries__did_id", "group__entries__department_id"
+    )
+
+    extensions: set = set()
+    for did_id, department_id in entries:
+        if did_id is None:
+            continue
+        qs = UserDIDDepartmentAssignment.objects.filter(did_id=did_id).select_related(
+            "user__extension"
+        )
+        if department_id is not None:
+            qs = qs.filter(department_id=department_id)
+        for assignment in qs:
+            ext = getattr(assignment.user, "extension", None)
+            if ext and ext.extension_number:
+                extensions.add(ext.extension_number)
+
+    return extensions
 
 
 class CDRListView(APIView):

@@ -4,7 +4,7 @@ apps/users/views.py
 Authentication, user management, and telephony resource assignment views.
 """
 
-from django.contrib.auth.models import update_last_login
+from django.contrib.auth.models import Permission, update_last_login
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -24,8 +24,10 @@ from apps.users.serializers import (
     ExtensionAssignSerializer,
     FaxBoxAssignSerializer,
     LoginSerializer,
+    PermissionSerializer,
     UserDetailSerializer,
     UserInviteSerializer,
+    UserPermissionsSerializer,
     UserUpsertSerializer,
     VoicemailBoxAssignSerializer,
 )
@@ -245,6 +247,47 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)
         user_data = UserDetailSerializer(fresh_user).data
         return Response(user_data, status=status.HTTP_200_OK)
+
+
+class PermissionListView(generics.ListAPIView):
+    """
+    GET /api/v1/users/permissions/
+    Lists assignable permissions, scoped to this app's own models
+    (excludes Django/DRF internal apps like admin, contenttypes, sessions,
+    auth's own Group/Permission models — those aren't meaningful CRUD grants
+    for an RCM admin).
+    """
+    serializer_class = PermissionSerializer
+    permission_classes = [IsSuperAdmin]
+
+    EXCLUDED_APPS = {"admin", "contenttypes", "sessions", "auth"}
+
+    def get_queryset(self):
+        return (
+            Permission.objects.select_related("content_type")
+            .exclude(content_type__app_label__in=self.EXCLUDED_APPS)
+            .order_by("content_type__app_label", "content_type__model", "codename")
+        )
+
+
+class UserPermissionsView(generics.RetrieveUpdateAPIView):
+    """
+    GET   /api/v1/users/{id}/permissions/ — view an admin's directly-assigned permissions.
+    PATCH /api/v1/users/{id}/permissions/ — replace an admin's permission set.
+             Body: {"permission_ids": ["<uuid>", ...]}
+
+    Only superadmins may grant/revoke permissions. Intended for 'admin'-role
+    users — an admin's create/edit/delete rights per resource (DID, Department,
+    AccessGroup, etc.) are managed here instead of Django admin.
+    """
+    serializer_class = UserPermissionsSerializer
+    permission_classes = [IsSuperAdmin]
+    lookup_field = "id"
+    queryset = User.objects.prefetch_related("user_permissions__content_type")
+
+    def update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return super().update(request, *args, **kwargs)
 
 
 class SipCredentialsView(APIView):

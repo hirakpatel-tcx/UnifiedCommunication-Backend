@@ -116,6 +116,17 @@ class User(AbstractBaseUser, PermissionsMixin):
         ),
     )
 
+    is_team_lead = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            "Marks this user as a Team Lead. Independent of role — a Team Lead "
+            "is typically an 'admin' but this is not enforced. Controls eligibility "
+            "for TLGroupAccess grants (call-log/report visibility scoped by DID and "
+            "Department); does not itself grant any access."
+        ),
+    )
+
     # ------------------------------------------------------------------
     # Account state
     # ------------------------------------------------------------------

@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
 from apps.users.models import User
 from apps.extensions.models import Extension
-from apps.dids.models import UserDID
+from apps.dids.models import UserDID, UserDIDDepartmentAssignment
 
 
 class ExtensionInline(admin.StackedInline):
@@ -19,15 +19,23 @@ class UserDIDInline(admin.TabularInline):
     autocomplete_fields = ("did",)
 
 
+class UserDIDDepartmentAssignmentInline(admin.TabularInline):
+    model = UserDIDDepartmentAssignment
+    extra = 0
+    verbose_name = "DID / Department Assignment"
+    verbose_name_plural = "DID / Department Assignments"
+    autocomplete_fields = ("did", "department")
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ("email", "first_name", "last_name", "tenant", "role", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
-    list_filter = ("role", "is_staff", "is_superuser", "is_active", "tenant")
-    inlines = [ExtensionInline, UserDIDInline]
+    list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
+    list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant")
+    inlines = [ExtensionInline, UserDIDInline, UserDIDDepartmentAssignmentInline]
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         ("Personal Info", {"fields": ("first_name", "last_name")}),
-        ("Tenant & Role", {"fields": ("tenant", "role", "sip_domain")}),
+        ("Tenant & Role", {"fields": ("tenant", "role", "is_team_lead", "sip_domain")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Telephony Resources", {"fields": ("fax_boxes", "voicemail_boxes")}),
         ("Important dates", {"fields": ("last_login",)}),
