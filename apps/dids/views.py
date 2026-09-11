@@ -4,7 +4,9 @@ apps/dids/views.py
 REST API views for DID listing and details.
 """
 
-from rest_framework import generics
+from rest_framework import generics, permissions
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from apps.common.permissions import IsAdminOrSuperAdmin
 from apps.common.tenant_resolver import get_scoped_tenant
 from apps.dids.models import (
@@ -211,3 +213,62 @@ class TLGroupAccessDetailView(generics.RetrieveDestroyAPIView):
     permission_classes = [IsAdminOrSuperAdmin]
     queryset = TLGroupAccess.objects.select_related("user", "group")
     lookup_field = "id"
+
+
+# ---------------------------------------------------------------------------
+# MyLogAccessRoster — the requesting TL's own roster, for the logs section
+# ---------------------------------------------------------------------------
+
+class MyLogAccessRosterView(APIView):
+    """
+    GET /api/v1/dids/my-log-access-roster/
+
+    Resolves the requesting user's own TLGroupAccess grants into a roster:
+    one row per (caller, DID, Department) they are permitted to see call
+    logs for, with the caller's extension number attached. This is the
+    "who am I looking at" view for the TL Logs section — a companion to
+    the CDR endpoints, which use the same underlying resolution to scope
+    the actual call records (see apps.common.cdr_views._resolve_tl_extensions).
+
+    Every authenticated user can call this — it only ever returns rows
+    derived from their own grants, and returns an empty list for a user
+    with no TLGroupAccess grants at all.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+
+        group_ids = TLGroupAccess.objects.filter(user=user).values_list("group_id", flat=True)
+        entries = AccessGroupEntry.objects.filter(group_id__in=group_ids).select_related("did", "department")
+
+        roster = []
+        seen = set()
+        for entry in entries:
+            qs = UserDIDDepartmentAssignment.objects.filter(did_id=entry.did_id).select_related(
+                "user__extension", "did", "department"
+            )
+            if entry.department_id is not None:
+                qs = qs.filter(department_id=entry.department_id)
+
+            for assignment in qs:
+                caller = assignment.user
+                ext = getattr(caller, "extension", None)
+                key = (caller.id, assignment.did_id, assignment.department_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                roster.append({
+                    "user_id": caller.id,
+                    "user_email": caller.email,
+                    "first_name": caller.first_name,
+                    "last_name": caller.last_name,
+                    "extension_number": ext.extension_number if ext else None,
+                    "did": assignment.did_id,
+                    "did_number": assignment.did.number,
+                    "department": assignment.department_id,
+                    "department_name": assignment.department.name,
+                })
+
+        roster.sort(key=lambda row: (row["department_name"], row["did_number"], row["user_email"]))
+        return Response(roster)

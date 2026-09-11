@@ -191,7 +191,7 @@ class FreeSwitchWebhookView(APIView):
                     else:
                         ext_num = f"ext-{object_id[:8]}"
                         sip_user = raw_sip_user or f"{ext_num}-{tenant.tenant_code}"
-                        transport = raw_transport or "TLS"
+                        transport = raw_transport or "TCP"
                         enc_pw = SecretService.encrypt(raw_sip_pw) if raw_sip_pw else ""
 
                         ext = Extension.objects.create(
@@ -230,7 +230,7 @@ class FreeSwitchWebhookView(APIView):
                     # New extension
                     ext_num = str(raw_num)[:20] if raw_num else f"ext-{object_id[:8]}"
                     sip_user = raw_sip_user or f"{ext_num}-{tenant.tenant_code}"
-                    transport = raw_transport or "TLS"
+                    transport = raw_transport or "TCP"
                     enc_pw = SecretService.encrypt(raw_sip_pw) if raw_sip_pw else ""
 
                     ext = Extension.objects.create(

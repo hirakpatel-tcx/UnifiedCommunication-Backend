@@ -319,6 +319,8 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "id",
             "email",
             "password",
+            "first_name",
+            "last_name",
             "role",
             "tenant_id",
             "sip_domain",

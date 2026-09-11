@@ -12,6 +12,7 @@ from apps.dids.views import (
     AccessGroupEntryDetailView,
     TLGroupAccessListCreateView,
     TLGroupAccessDetailView,
+    MyLogAccessRosterView,
 )
 
 urlpatterns = [
@@ -47,4 +48,6 @@ urlpatterns = [
 
     path("tl-group-access/", TLGroupAccessListCreateView.as_view(), name="tl-group-access-list"),
     path("tl-group-access/<uuid:id>/", TLGroupAccessDetailView.as_view(), name="tl-group-access-detail"),
+
+    path("my-log-access-roster/", MyLogAccessRosterView.as_view(), name="my-log-access-roster"),
 ]
