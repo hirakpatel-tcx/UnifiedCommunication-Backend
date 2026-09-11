@@ -12,12 +12,14 @@ from apps.common.cdr_views import (
     CDRExtensionCallSummaryView,
     CDRHourlyStatsView,
     CDRListView,
+    CDRNotesView,
     CDRSummaryView,
     CDRTopExtensionsView,
 )
 
 urlpatterns = [
     path("", CDRListView.as_view(), name="cdr-list"),
+    path("notes/", CDRNotesView.as_view(), name="cdr-notes"),
     path("summary/", CDRSummaryView.as_view(), name="cdr-summary"),
     path("hourly-stats/", CDRHourlyStatsView.as_view(), name="cdr-hourly-stats"),
     path("daily-summary/", CDRDailySummaryView.as_view(), name="cdr-daily-summary"),

@@ -300,6 +300,40 @@ class CDRExtensionCallSummaryView(APIView):
         )
 
 
+class CDRNotesView(APIView):
+    """
+    POST /api/v1/cdr/notes/
+    Attaches a note to a call, keyed by the SIP Call-ID reported by the
+    PJSIP client's call-state event. Proxied straight through to FreeSWITCH
+    / Cloud PBX Client API, which owns the note (attaches it to the CDR row
+    immediately if it already exists, or queues it for retry if the CDR for
+    a just-ended call isn't ready yet).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        feat_err = _validate_calling_feature(tenant)
+        if feat_err:
+            return feat_err
+
+        sip_call_id = request.data.get("sip_call_id")
+        if not sip_call_id:
+            return Response(
+                {"detail": "sip_call_id is required."}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return FreeSwitchClientService.proxy_request(
+            tenant=tenant,
+            method="POST",
+            endpoint_path="cdr/notes/",
+            json_data={
+                "sip_call_id": sip_call_id,
+                "notes": request.data.get("notes", ""),
+            },
+        )
+
+
 class CDRActiveExtensionsView(APIView):
     """
     GET /api/v1/cdr/active-extensions/
