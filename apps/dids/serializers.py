@@ -99,7 +99,7 @@ class AccessGroupEntrySerializer(serializers.ModelSerializer):
             "department_name",
             "created_at",
         ]
-        read_only_fields = ["id", "did_number", "department_name", "created_at"]
+        read_only_fields = ["id", "group", "did_number", "department_name", "created_at"]
 
 
 class AccessGroupSerializer(serializers.ModelSerializer):
