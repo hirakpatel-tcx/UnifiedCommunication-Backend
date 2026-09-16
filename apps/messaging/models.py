@@ -82,6 +82,11 @@ class Message(TimestampedModel):
     direction = models.CharField(max_length=10, choices=MessageDirection.choices)
     from_number = models.CharField(max_length=20)
     body = models.TextField(blank=True, default="")
+    # Deprecated: raw Telnyx/sender-supplied media URLs, kept only for
+    # messages created before MessageMedia existed. New sends/receives store
+    # downloaded copies as MessageMedia rows instead (see media_files) and
+    # leave this empty — MessageSerializer.media_urls now derives its output
+    # from media_files, not this field.
     media_urls = models.JSONField(default=list, blank=True)
 
     telnyx_message_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
@@ -101,3 +106,51 @@ class Message(TimestampedModel):
 
     def __str__(self):
         return f"Message({self.id}) {self.direction} on {self.conversation_id}"
+
+
+class ConversationRead(TimestampedModel):
+    """
+    Tracks how far a specific user has read into a Conversation, so
+    unread/read state can be computed per-viewer rather than globally —
+    multiple admins/users on the same tenant may open the same conversation
+    independently, and each should see their own read position.
+    """
+
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="read_states")
+    user = models.ForeignKey("users.User", on_delete=models.CASCADE, related_name="conversation_read_states")
+    last_read_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["conversation", "user"], name="uniq_conversation_read_user"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "conversation"]),
+        ]
+
+    def __str__(self):
+        return f"ConversationRead(user={self.user_id}, conversation={self.conversation_id})"
+
+
+class MessageMedia(TimestampedModel):
+    """
+    One MMS attachment belonging to a Message, downloaded into local storage
+    at send/receive time rather than served from Telnyx's (inbound) or the
+    sender's (outbound) original URL directly — so access is gated by this
+    API's own JWT auth instead of an unauthenticated third-party link.
+    """
+
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="media_files")
+    source_url = models.URLField(max_length=2000, help_text="The original Telnyx/sender-supplied URL this was downloaded from.")
+    file_path = models.CharField(max_length=512, help_text="Path on disk, relative to MESSAGING_MEDIA_ROOT.")
+    content_type = models.CharField(max_length=100, blank=True, default="")
+    size_bytes = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["message"]),
+        ]
+
+    def __str__(self):
+        return f"MessageMedia({self.id}) on {self.message_id}"

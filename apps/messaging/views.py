@@ -11,19 +11,24 @@ Enforces:
 """
 
 import logging
+import os
 
+from django.conf import settings
+from django.http import FileResponse, Http404
 from django.utils import timezone
 from httpx import HTTPStatusError, RequestError
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django.db.models import Q
+
 from apps.common.services.telnyx_client import TelnyxClientService
 from apps.common.tenant_resolver import get_scoped_tenant
 from apps.dids.models import DID
-from apps.messaging.models import Conversation, Message, MessageDirection, MessageStatus
+from apps.messaging.models import Conversation, ConversationRead, Message, MessageDirection, MessageMedia, MessageStatus
 from apps.messaging.serializers import ConversationSerializer, MessageSerializer, SendMessageSerializer
-from apps.messaging.services import resolve_conversation
+from apps.messaging.services import broadcast_message_event, download_message_media, resolve_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -38,22 +43,81 @@ def _validate_messaging_feature(tenant):
 
 
 class ConversationListView(generics.ListAPIView):
-    """GET /api/v1/messaging/conversations/"""
+    """
+    GET /api/v1/messaging/conversations/
+    Params:
+      search   — matches a participant's phone_number (contains) or a saved
+                 Contact's name, case-insensitive.
+      did_id   — restrict to conversations on this DID.
+      start, end — ISO datetimes; restrict to conversations with
+                 last_message_at in this range.
+      unread   — "true" to return only conversations with unread messages
+                 for the requesting user (see ConversationSerializer.unread_count).
+    """
 
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ConversationSerializer
 
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), "request": self.request}
+
     def get_queryset(self):
         tenant = get_scoped_tenant(self.request)
-        return (
+        qs = (
             Conversation.objects.filter(tenant=tenant)
-            .prefetch_related("participants", "messages")
+            .prefetch_related("participants__contact", "messages", "read_states")
             .order_by("-last_message_at", "-created_at")
         )
 
+        params = self.request.query_params
+
+        search = params.get("search")
+        if search:
+            qs = qs.filter(
+                Q(participants__phone_number__icontains=search)
+                | Q(participants__contact__first_name__icontains=search)
+                | Q(participants__contact__last_name__icontains=search)
+            ).distinct()
+
+        did_id = params.get("did_id")
+        if did_id:
+            qs = qs.filter(did_id=did_id)
+
+        start = params.get("start")
+        if start:
+            qs = qs.filter(last_message_at__gte=start)
+        end = params.get("end")
+        if end:
+            qs = qs.filter(last_message_at__lte=end)
+
+        if params.get("unread", "").lower() == "true":
+            # Unread = last_message_at is newer than this user's last_read_at
+            # for that conversation (or the user has no read record at all).
+            # Done in Python against the already-fetched prefetch (read_states),
+            # rather than a second query, since the queryset is typically a
+            # single tenant's conversation count (not large enough to need
+            # DB-side filtering here).
+            user = self.request.user
+            unread_ids = [
+                c.id for c in qs
+                if c.last_message_at and (
+                    (rs := next((r for r in c.read_states.all() if r.user_id == user.id), None)) is None
+                    or rs.last_read_at < c.last_message_at
+                )
+            ]
+            qs = qs.filter(id__in=unread_ids)
+
+        return qs
+
 
 class ConversationMessagesView(generics.ListAPIView):
-    """GET /api/v1/messaging/conversations/{id}/messages/"""
+    """
+    GET /api/v1/messaging/conversations/{id}/messages/
+    Params:
+      search — matches message body (contains), case-insensitive.
+      start, end — ISO datetimes; restrict to messages created in this range.
+      direction — "inbound" or "outbound".
+    """
 
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = MessageSerializer
@@ -61,9 +125,28 @@ class ConversationMessagesView(generics.ListAPIView):
     def get_queryset(self):
         tenant = get_scoped_tenant(self.request)
         conversation_id = self.kwargs["conversation_id"]
-        return Message.objects.filter(
+        qs = Message.objects.filter(
             tenant=tenant, conversation_id=conversation_id
         ).order_by("created_at")
+
+        params = self.request.query_params
+
+        search = params.get("search")
+        if search:
+            qs = qs.filter(body__icontains=search)
+
+        start = params.get("start")
+        if start:
+            qs = qs.filter(created_at__gte=start)
+        end = params.get("end")
+        if end:
+            qs = qs.filter(created_at__lte=end)
+
+        direction = params.get("direction")
+        if direction in (MessageDirection.INBOUND, MessageDirection.OUTBOUND):
+            qs = qs.filter(direction=direction)
+
+        return qs
 
 
 class SendMessageView(APIView):
@@ -109,7 +192,6 @@ class SendMessageView(APIView):
             direction=MessageDirection.OUTBOUND,
             from_number=did.number,
             body=body,
-            media_urls=media_urls,
             status=MessageStatus.QUEUED,
         )
 
@@ -147,7 +229,66 @@ class SendMessageView(APIView):
         message.sent_at = timezone.now()
         message.save(update_fields=["telnyx_message_id", "status", "sent_at", "updated_at"])
 
+        # Store our own copy of each attachment (from the sender-supplied
+        # URLs, which Telnyx has already been given above) so the frontend
+        # reads it back through this API's own auth rather than whatever
+        # third-party URL the sender originally provided.
+        if media_urls:
+            download_message_media(message, media_urls)
+
         conversation.last_message_at = message.sent_at
         conversation.save(update_fields=["last_message_at", "updated_at"])
 
+        broadcast_message_event(message)
+
         return Response(MessageSerializer(message).data, status=status.HTTP_201_CREATED)
+
+
+class MessageMediaView(APIView):
+    """
+    GET /api/v1/messaging/media/{media_id}/
+    Streams a locally-stored MMS attachment (inbound or outbound). Requires
+    the same JWT auth as the rest of this API — the file is never served
+    from Telnyx's/the sender's original URL, only from our own copy, gated
+    by this endpoint checking the owning Message's tenant against the
+    caller's scoped tenant.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, media_id, *args, **kwargs):
+        tenant = get_scoped_tenant(request)
+
+        media = MessageMedia.objects.filter(id=media_id, message__tenant=tenant).select_related("message").first()
+        if not media:
+            raise Http404
+
+        abs_path = os.path.join(settings.MESSAGING_MEDIA_ROOT, media.file_path)
+        if not os.path.isfile(abs_path):
+            raise Http404
+
+        return FileResponse(
+            open(abs_path, "rb"),
+            content_type=media.content_type or "application/octet-stream",
+        )
+
+
+class ConversationMarkReadView(APIView):
+    """
+    POST /api/v1/messaging/conversations/{id}/read/
+    Marks the conversation as read (up to now) for the requesting user,
+    upserting their ConversationRead row. No body required.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, conversation_id, *args, **kwargs):
+        tenant = get_scoped_tenant(request)
+        conversation = Conversation.objects.filter(id=conversation_id, tenant=tenant).first()
+        if not conversation:
+            raise Http404
+
+        ConversationRead.objects.update_or_create(
+            conversation=conversation,
+            user=request.user,
+            defaults={"last_read_at": timezone.now()},
+        )
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)

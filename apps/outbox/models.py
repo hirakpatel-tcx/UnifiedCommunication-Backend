@@ -9,9 +9,13 @@ Design decisions:
   and can be re-dispatched without re-running the business logic.
 
 - CRITICAL: target_type must ALWAYS be explicit. It is NEVER null.
-  "user"   → send only to user.{target_id} channel group
-  "tenant" → send to tenant.{target_id} group (explicitly authorized only;
-              never the default behavior)
+  "user"         → send only to user.{target_id} channel group
+  "tenant"       → send to tenant.{target_id} group (explicitly authorized
+                    only; never the default behavior)
+  "conversation" → send to conversation.{target_id} group (explicitly
+                    authorized only — see apps.messaging.consumers, which
+                    checks the connecting user's tenant owns the
+                    conversation before joining the group)
 
   There is NO "broadcast to all" by leaving target_user null or
   by any other implicit mechanism. Every OutboxEvent must name an
@@ -54,6 +58,7 @@ class OutboxEventStatus(models.TextChoices):
 class OutboxTargetType(models.TextChoices):
     USER = "user", "User"
     TENANT = "tenant", "Tenant"
+    CONVERSATION = "conversation", "Conversation"
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +97,10 @@ class OutboxEvent(UUIDModel):
         choices=OutboxTargetType.choices,
         help_text=(
             "Explicit delivery target type. NEVER null. "
-            "'user'   → channel group: user.{target_id} "
-            "'tenant' → channel group: tenant.{target_id} "
-            "Tenant-wide events require explicit authorization at dispatch time."
+            "'user'         → channel group: user.{target_id} "
+            "'tenant'       → channel group: tenant.{target_id} "
+            "'conversation' → channel group: conversation.{target_id} "
+            "Tenant-wide and conversation events require explicit authorization at dispatch time."
         ),
     )
     target_id = models.CharField(

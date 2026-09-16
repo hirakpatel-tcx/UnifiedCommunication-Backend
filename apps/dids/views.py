@@ -4,11 +4,13 @@ apps/dids/views.py
 REST API views for DID listing and details.
 """
 
+from django.db.models import Q
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.common.permissions import IsAdminOrSuperAdmin
 from apps.common.tenant_resolver import get_scoped_tenant
+from apps.common.tl_scoping import resolve_tl_did_ids, resolve_tl_department_ids
 from apps.dids.models import (
     DID,
     Department,
@@ -41,10 +43,37 @@ class DIDListView(generics.ListAPIView):
         tenant = get_scoped_tenant(self.request)
         qs = DID.objects.filter(tenant=tenant).select_related("tenant").prefetch_related("user_dids__user")
 
+        # Team Leads are restricted to DIDs named in their granted
+        # AccessGroup entries (TLGroupAccess). Grants resolving to zero DIDs
+        # correctly yield an empty listing rather than the tenant-wide list.
+        user = self.request.user
+        if not (user.is_superuser or getattr(user, "role", "") == "superadmin"):
+            tl_did_ids = resolve_tl_did_ids(user)
+            if tl_did_ids is not None:
+                qs = qs.filter(id__in=tl_did_ids)
+
         # Search query (by phone number)
         search = self.request.query_params.get("search")
         if search:
             qs = qs.filter(number__icontains=search)
+
+        # Department filter (multi-select): ?department_id=1,2,3
+        # A DID matches if any caller works it under that department.
+        department_id = self.request.query_params.get("department_id")
+        if department_id:
+            department_ids = [d.strip() for d in department_id.split(",") if d.strip()]
+            if department_ids:
+                qs = qs.filter(
+                    user_department_assignments__department_id__in=department_ids
+                ).distinct()
+
+        # User filter (multi-select): ?user_id=1,2,3
+        # A DID matches if it's assigned to any of these users.
+        user_id = self.request.query_params.get("user_id")
+        if user_id:
+            user_ids = [u.strip() for u in user_id.split(",") if u.strip()]
+            if user_ids:
+                qs = qs.filter(user_dids__user_id__in=user_ids).distinct()
 
         return qs.order_by("number")
 
@@ -80,7 +109,34 @@ class DepartmentListCreateView(generics.ListCreateAPIView):
     """
     serializer_class = DepartmentSerializer
     permission_classes = [IsAdminOrSuperAdmin]
-    queryset = Department.objects.all().order_by("name")
+
+    def get_queryset(self):
+        qs = Department.objects.all().order_by("name")
+        user = self.request.user
+        if self.request.method == "GET" and not (
+            user.is_superuser or getattr(user, "role", "") == "superadmin"
+        ):
+            tl_department_ids = resolve_tl_department_ids(user)
+            if tl_department_ids is not None:
+                qs = qs.filter(id__in=tl_department_ids)
+
+        # DID filter (multi-select): ?did_id=1,2,3
+        # A department matches if any caller works that DID under it.
+        did_id = self.request.query_params.get("did_id")
+        if did_id:
+            did_ids = [d.strip() for d in did_id.split(",") if d.strip()]
+            if did_ids:
+                qs = qs.filter(user_did_assignments__did_id__in=did_ids).distinct()
+
+        # User filter (multi-select): ?user_id=1,2,3
+        # A department matches if that user works any DID under it.
+        user_id = self.request.query_params.get("user_id")
+        if user_id:
+            user_ids = [u.strip() for u in user_id.split(",") if u.strip()]
+            if user_ids:
+                qs = qs.filter(user_did_assignments__user_id__in=user_ids).distinct()
+
+        return qs
 
 
 class DepartmentDetailView(generics.RetrieveUpdateDestroyAPIView):

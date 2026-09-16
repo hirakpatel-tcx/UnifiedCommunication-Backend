@@ -13,7 +13,7 @@ from rest_framework import serializers
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from apps.common.services.secret_service import SecretService
-from apps.dids.models import DID, UserDID
+from apps.dids.models import DID, UserDID, Department, UserDIDDepartmentAssignment
 from apps.extensions.models import Extension
 from apps.tenants.models import Tenant
 from apps.users.models import User, UserRole
@@ -112,6 +112,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     extension = ExtensionSummarySerializer(read_only=True)
     dids = UserDIDSummarySerializer(source="user_dids", many=True, read_only=True)
     features = serializers.SerializerMethodField()
+    departments = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -127,11 +128,33 @@ class UserDetailSerializer(serializers.ModelSerializer):
             "features",
             "extension",
             "dids",
+            "departments",
             "fax_boxes",
             "voicemail_boxes",
             "is_first_login",
             "must_change_password",
             "created_at",
+        ]
+
+    def get_departments(self, obj) -> list:
+        """
+        Departments this user is associated with, for either reason:
+        - a regular caller's work assignment (UserDIDDepartmentAssignment), or
+        - a Team Lead's reporting grant (TLGroupAccess → AccessGroupEntry).
+        A TL grant with department=None ("all departments on this DID")
+        contributes no specific department name here.
+        """
+        departments = {
+            a.department_id: a.department.name
+            for a in obj.did_department_assignments.select_related("department").all()
+        }
+        for grant in obj.tl_group_access.select_related("group").prefetch_related("group__entries__department").all():
+            for entry in grant.group.entries.all():
+                if entry.department_id:
+                    departments[entry.department_id] = entry.department.name
+        return [
+            {"id": dept_id, "name": name}
+            for dept_id, name in sorted(departments.items(), key=lambda item: item[1])
         ]
 
     def get_features(self, obj) -> dict:
@@ -310,6 +333,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
     sip_domain = serializers.CharField(required=False, allow_blank=True, default="")
     extension_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     did_ids = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
+    department_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     fax_boxes = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
     voicemail_boxes = serializers.ListField(child=serializers.IntegerField(min_value=0), required=False, allow_empty=True)
 
@@ -331,6 +355,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "generate_temp_password",
             "extension_id",
             "did_ids",
+            "department_id",
             "fax_boxes",
             "voicemail_boxes",
             "created_at",
@@ -366,6 +391,17 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             except DjangoValidationError as e:
                 raise serializers.ValidationError({"voicemail_boxes": e.messages})
 
+        # A department only means something paired with a DID — resolve it
+        # up front so create()/update() can apply it to every did_id.
+        department_ref = attrs.get("department_id")
+        if department_ref not in (None, "", "null"):
+            department = Department.objects.filter(id=department_ref).first()
+            if not department:
+                raise serializers.ValidationError({"department_id": f"Department '{department_ref}' not found."})
+            attrs["_department"] = department
+        else:
+            attrs["_department"] = None
+
         return attrs
 
     @transaction.atomic
@@ -379,6 +415,8 @@ class UserUpsertSerializer(serializers.ModelSerializer):
         raw_tenant = validated_data.pop("tenant_id", None)
         validated_data.pop("notify", None)
         validated_data.pop("generate_temp_password", None)
+        validated_data.pop("department_id", None)
+        department = validated_data.pop("_department", None)
 
         is_temp_password = not raw_password
         if is_temp_password:
@@ -453,11 +491,22 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             messaging_enabled = bool(tenant and (tenant.features or {}).get("messaging", False))
             if did_refs and not calling_enabled and not messaging_enabled:
                 raise serializers.ValidationError({"did_ids": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."})
+            resolved_dids = []
             for did_ref in did_refs:
                 did = _resolve_did(did_ref, tenant)
                 if not did:
                     raise serializers.ValidationError({"did_ids": f"DID '{did_ref}' not found in tenant."})
                 UserDID.objects.get_or_create(user=user, did=did)
+                resolved_dids.append(did)
+
+            if department is not None:
+                for did in resolved_dids:
+                    UserDIDDepartmentAssignment.objects.filter(user=user, did=did).exclude(
+                        department=department
+                    ).delete()
+                    UserDIDDepartmentAssignment.objects.get_or_create(
+                        user=user, did=did, department=department
+                    )
 
         return user
 
@@ -468,6 +517,10 @@ class UserUpsertSerializer(serializers.ModelSerializer):
 
         has_dids = "did_ids" in validated_data
         did_refs = validated_data.pop("did_ids", None)
+
+        has_department = "department_id" in validated_data
+        validated_data.pop("department_id", None)
+        department = validated_data.pop("_department", None)
 
         raw_password = validated_data.pop("password", None)
         raw_tenant = validated_data.pop("tenant_id", None)
@@ -525,10 +578,12 @@ class UserUpsertSerializer(serializers.ModelSerializer):
                 Extension.objects.filter(id=ext.id).update(user=instance)
 
         # Handle DIDs update if passed
+        target_dids = None
         if has_dids:
             if not did_refs:
                 # Clear all assigned DIDs
                 UserDID.objects.filter(user=instance).delete()
+                target_dids = []
             else:
                 if not tenant:
                     raise serializers.ValidationError({"did_ids": "User has no tenant assigned."})
@@ -547,6 +602,26 @@ class UserUpsertSerializer(serializers.ModelSerializer):
                 UserDID.objects.filter(user=instance).exclude(did__in=target_dids).delete()
                 for d in target_dids:
                     UserDID.objects.get_or_create(user=instance, did=d)
+
+        # Handle department update if passed. A department only means
+        # something paired with a DID, so it applies to did_ids from this
+        # same request if given, otherwise to the user's existing DIDs.
+        if has_department:
+            dids_for_department = target_dids if target_dids is not None else [
+                ud.did for ud in UserDID.objects.filter(user=instance).select_related("did")
+            ]
+            if department is None:
+                UserDIDDepartmentAssignment.objects.filter(
+                    user=instance, did__in=dids_for_department
+                ).delete()
+            else:
+                for did in dids_for_department:
+                    UserDIDDepartmentAssignment.objects.filter(user=instance, did=did).exclude(
+                        department=department
+                    ).delete()
+                    UserDIDDepartmentAssignment.objects.get_or_create(
+                        user=instance, did=did, department=department
+                    )
 
         return instance
 

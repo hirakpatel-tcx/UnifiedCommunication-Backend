@@ -33,7 +33,7 @@ from apps.common.services.secret_service import SecretService
 from apps.dids.models import DID, UserDID
 from apps.extensions.models import Extension
 from apps.messaging.models import Message, MessageDirection, MessageStatus
-from apps.messaging.services import resolve_conversation
+from apps.messaging.services import broadcast_message_event, download_message_media, resolve_conversation
 from apps.outbox.models import OutboxEvent, OutboxTargetType
 from apps.tenants.models import Tenant
 from apps.webhooks.models import ProcessingStatus, WebhookLog
@@ -455,20 +455,27 @@ class TelnyxWebhookView(APIView):
         media = message_payload.get("media") or []
         media_urls = [m.get("url") for m in media if m.get("url")]
 
-        Message.objects.create(
+        message = Message.objects.create(
             conversation=conversation,
             tenant=tenant,
             did=did,
             direction=MessageDirection.INBOUND,
             from_number=from_number,
             body=message_payload.get("text", ""),
-            media_urls=media_urls,
             telnyx_message_id=message_payload.get("id"),
             status=MessageStatus.RECEIVED,
         )
 
+        # Telnyx's own media URL is only reliably fetchable for a limited
+        # window — store our own copy immediately so it's still available
+        # (and served through this API's own auth) after that expires.
+        if media_urls:
+            download_message_media(message, media_urls)
+
         conversation.last_message_at = timezone.now()
         conversation.save(update_fields=["last_message_at", "updated_at"])
+
+        broadcast_message_event(message)
 
 
 class WebhookLogListView(generics.ListAPIView):

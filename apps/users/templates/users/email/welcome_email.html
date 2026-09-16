@@ -32,6 +32,18 @@
               </table>
 
               <p style="margin:0 0 16px; font-size:15px; color:#1a1f36;">{{ password_line }}</p>
+
+              {% if download_url %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+                <tr>
+                  <td align="center" style="padding:8px 0 4px;">
+                    <a href="{{ download_url }}" style="display:inline-block; background-color:#1a1f36; color:#ffffff; text-decoration:none; font-size:15px; font-weight:bold; padding:12px 28px; border-radius:6px;">Download TCX Connect for Windows</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 16px; font-size:13px; color:#6b7280;">This link is valid for {{ download_ttl_hours }} hours after you first open it.</p>
+              {% endif %}
+
               <p style="margin:0; font-size:13px; color:#6b7280;">If you did not expect this email, please contact your administrator.</p>
             </td>
           </tr>

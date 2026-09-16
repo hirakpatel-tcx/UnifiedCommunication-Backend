@@ -72,6 +72,7 @@ LOCAL_APPS = [
     "apps.outbox.apps.OutboxConfig",
     "apps.contacts.apps.ContactsConfig",
     "apps.messaging.apps.MessagingConfig",
+    "apps.downloads.apps.DownloadsConfig",
 ]
 
 INSTALLED_APPS = LOCAL_APPS + THIRD_PARTY_APPS + DJANGO_APPS
@@ -289,12 +290,30 @@ FREESWITCH_MASTER_KEY = env("FREESWITCH_MASTER_KEY", default="")
 FREESWITCH_API_TIMEOUT_SECONDS = env.float("FREESWITCH_API_TIMEOUT_SECONDS", default=30.0)
 
 # ---------------------------------------------------------------------------
+# Desktop app updates (electron-updater / update-server)
+# ---------------------------------------------------------------------------
+# PUBLISH_TOKEN is shared with update-server; kept server-side only — never
+# sent to the browser or embedded in the welcome email. The email instead
+# links to /api/v1/downloads/fetch/<token>/, a short-lived per-user token
+# that Django exchanges for the real, authenticated download.
+UPDATE_SERVER_BASE_URL = env("UPDATE_SERVER_BASE_URL", default="https://update.tcxconnect.tech")
+UPDATE_SERVER_PUBLISH_TOKEN = env("UPDATE_SERVER_PUBLISH_TOKEN", default="")
+UPDATE_SERVER_TIMEOUT_SECONDS = env.float("UPDATE_SERVER_TIMEOUT_SECONDS", default=60.0)
+DOWNLOAD_TOKEN_TTL_HOURS = env.int("DOWNLOAD_TOKEN_TTL_HOURS", default=2)
+
+# ---------------------------------------------------------------------------
 # Telnyx Messaging (SMS/MMS)
 # ---------------------------------------------------------------------------
 TELNYX_API_BASE_URL = env("TELNYX_API_BASE_URL", default="https://api.telnyx.com")
 TELNYX_API_KEY = env("TELNYX_API_KEY", default="")
 TELNYX_PUBLIC_KEY = env("TELNYX_PUBLIC_KEY", default="")
 TELNYX_API_TIMEOUT_SECONDS = env.float("TELNYX_API_TIMEOUT_SECONDS", default=30.0)
+
+# MMS attachments (inbound and outbound) are downloaded into local storage
+# rather than served from Telnyx's/the sender's original URL directly, so
+# access is gated by this API's own JWT auth instead of an unauthenticated
+# third-party link. See apps.messaging.models.MessageMedia.
+MESSAGING_MEDIA_ROOT = env("MESSAGING_MEDIA_ROOT", default=str(BASE_DIR / "media" / "messaging"))
 
 # ---------------------------------------------------------------------------
 # CORS (Cross-Origin Resource Sharing)
@@ -377,3 +396,8 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="TCX Connect <noreply@tcx
 # Frontend
 # ---------------------------------------------------------------------------
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
+
+# Base URL this backend is publicly reachable at, used to build absolute
+# links (e.g. the desktop-download passthrough link) from Celery tasks,
+# which have no request object to call request.build_absolute_uri() on.
+API_BASE_URL = env("API_BASE_URL", default="http://localhost:8000")

@@ -42,8 +42,14 @@ urlpatterns = [
     # 8. Call Recordings Proxy
     path("recordings/", include("apps.common.recording_urls")),
 
+    # Telnyx account billing/cost proxy (superadmin only)
+    path("billing/telnyx/", include("apps.common.telnyx_billing_urls")),
+
     # 8. Webhooks
     path("webhooks/", include("apps.webhooks.urls")),
+
+    # Desktop app download passthrough
+    path("downloads/", include("apps.downloads.urls")),
 
     # 9. Audit & Monitoring Logs
     path("audit-logs/", AuditLogListView.as_view(), name="audit-logs-list"),

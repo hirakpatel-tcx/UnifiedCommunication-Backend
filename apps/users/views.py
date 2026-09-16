@@ -5,6 +5,7 @@ Authentication, user management, and telephony resource assignment views.
 """
 
 from django.contrib.auth.models import Permission, update_last_login
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -14,7 +15,8 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
 from apps.common.services.secret_service import SecretService
-from apps.dids.models import DID, UserDID
+from apps.common.tl_scoping import resolve_tl_extensions
+from apps.dids.models import DID, UserDID, TLGroupAccess
 from apps.extensions.models import Extension
 from apps.users.models import User
 from apps.users.tasks import send_welcome_email
@@ -134,12 +136,77 @@ class UserListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        qs = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").all()
+        qs = (
+            User.objects.select_related("tenant", "extension")
+            .prefetch_related(
+                "user_dids__did",
+                "did_department_assignments__department",
+                "tl_group_access__group__entries__department",
+            )
+            .all()
+        )
 
-        # Role filter
+        # Role filter (multi-select): ?role=user,admin,superadmin
         role = self.request.query_params.get("role")
         if role:
-            qs = qs.filter(role=role)
+            roles = [r.strip() for r in role.split(",") if r.strip()]
+            if roles:
+                qs = qs.filter(role__in=roles)
+
+        # Team Lead filter — a 3-way toggle that overrides the role filter
+        # when set, since a TL's `role` is independent of is_team_lead (a TL
+        # is typically 'admin' but that's not enforced, so filtering by role
+        # alone cannot express "only TLs" or "everyone except TLs").
+        is_team_lead = self.request.query_params.get("is_team_lead")
+        if is_team_lead is not None:
+            if is_team_lead.lower() in ("true", "1"):
+                qs = qs.filter(is_team_lead=True)
+            elif is_team_lead.lower() in ("false", "0"):
+                qs = qs.filter(is_team_lead=False)
+
+        # Department filter (multi-select): ?department_id=1,2,3
+        # Matches both regular callers assigned to work that department
+        # (UserDIDDepartmentAssignment) and Team Leads whose AccessGroup
+        # grant covers it. A null-department entry grants "all departments
+        # on that DID" (see AccessGroupEntry.department docstring), which we
+        # can't resolve to specific department ids without knowing which
+        # departments are actually worked on that DID — so, consistent with
+        # resolve_tl_department_ids treating a null entry as unrestricted,
+        # any TL holding such a grant matches every department filter.
+        #
+        # NOTE: `Q(tl_group_access__group__entries__department_id__isnull=True)`
+        # on its own is a trap — for a user with NO tl_group_access rows at
+        # all, the reverse-FK LEFT OUTER JOIN still produces a NULL
+        # department_id, so that Q would match every non-TL user too, not
+        # just TLs holding a genuine "all departments" entry. Restricting to
+        # AccessGroupEntry rows that actually exist (via a subquery of
+        # user ids) avoids matching users with no grants whatsoever.
+        department_id = self.request.query_params.get("department_id")
+        if department_id:
+            department_ids = [d.strip() for d in department_id.split(",") if d.strip()]
+            if department_ids:
+                unrestricted_tl_ids = TLGroupAccess.objects.filter(
+                    group__entries__id__isnull=False,
+                    group__entries__department_id__isnull=True,
+                ).values_list("user_id", flat=True)
+                qs = qs.filter(
+                    Q(did_department_assignments__department_id__in=department_ids)
+                    | Q(tl_group_access__group__entries__department_id__in=department_ids)
+                    | Q(id__in=unrestricted_tl_ids)
+                ).distinct()
+
+        # DID filter (multi-select): ?did_id=1,2,3
+        # Matches regular callers with that DID assigned (UserDID) and Team
+        # Leads whose AccessGroup grant covers it, mirroring the
+        # department_id filter above.
+        did_id = self.request.query_params.get("did_id")
+        if did_id:
+            did_ids = [d.strip() for d in did_id.split(",") if d.strip()]
+            if did_ids:
+                qs = qs.filter(
+                    Q(user_dids__did_id__in=did_ids)
+                    | Q(tl_group_access__group__entries__did_id__in=did_ids)
+                ).distinct()
 
         # Active filter
         is_active = self.request.query_params.get("is_active")
@@ -160,6 +227,26 @@ class UserListCreateView(generics.ListCreateAPIView):
             else:
                 qs = qs.none()
 
+        # Team Leads see only the users assigned to their granted DID/
+        # Department combinations (TLGroupAccess), same restriction already
+        # applied to CDR logs, extensions, and DIDs. Superadmins and admins
+        # without TL grants are unrestricted.
+        if not (user.is_superuser or user.role == "superadmin"):
+            tl_extensions = resolve_tl_extensions(user)
+            if tl_extensions is not None:
+                qs = qs.filter(extension__extension_number__in=tl_extensions)
+
+        # A tenant admin (non-superadmin) must never see superadmin accounts,
+        # regardless of tenant/TL scoping above — superadmin is a
+        # platform-level role and outranks tenant administration.
+        if not (user.is_superuser or user.role == "superadmin"):
+            qs = qs.exclude(role="superadmin")
+
+        # The Django root/platform superuser account and any Django-admin
+        # ("staff") account are internal/operator accounts, never a tenant's
+        # own user — hide them from the listing unconditionally, for everyone.
+        qs = qs.exclude(is_superuser=True).exclude(is_staff=True)
+
         return qs.order_by("email")
 
     def create(self, request, *args, **kwargs):
@@ -172,6 +259,7 @@ class UserListCreateView(generics.ListCreateAPIView):
             plaintext_password=user._plaintext_password,
             is_temp_password=user._is_temp_password,
             first_name=user.first_name,
+            user_id=user.id,
         )
 
         fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)
@@ -199,6 +287,7 @@ class UserInviteCreateView(generics.CreateAPIView):
             plaintext_password=user._plaintext_password,
             is_temp_password=True,
             first_name=user.first_name,
+            user_id=user.id,
         )
 
         fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)
@@ -242,6 +331,7 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
                 plaintext_password=user._plaintext_password,
                 is_temp_password=user._is_temp_password,
                 first_name=user.first_name,
+                user_id=user.id,
             )
 
         fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)

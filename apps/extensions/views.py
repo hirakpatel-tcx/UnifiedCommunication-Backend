@@ -11,9 +11,12 @@ from rest_framework.permissions import BasePermission
 from django.shortcuts import get_object_or_404
 
 from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
+from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.tenant_resolver import get_scoped_tenant
+from apps.common.tl_scoping import resolve_tl_extensions
 from apps.extensions.models import Extension
 from apps.extensions.serializers import ExtensionSerializer, ExtensionTransportUpdateSerializer
+from apps.users.serializers import UserDetailSerializer
 
 
 class IsSuperAdminOrReadOnlyAdmin(BasePermission):
@@ -46,6 +49,16 @@ class ExtensionListView(generics.ListAPIView):
     def get_queryset(self):
         tenant = get_scoped_tenant(self.request)
         qs = Extension.objects.filter(tenant=tenant).select_related("tenant", "user")
+
+        # Team Leads are restricted to the extensions of callers assigned to
+        # their granted DID/Department combinations (TLGroupAccess). Grants
+        # resolving to zero extensions correctly yield an empty listing
+        # rather than falling back to the tenant-wide list.
+        user = self.request.user
+        if not (user.is_superuser or getattr(user, "role", "") == "superadmin"):
+            tl_extensions = resolve_tl_extensions(user)
+            if tl_extensions is not None:
+                qs = qs.filter(extension_number__in=tl_extensions)
 
         # Assignment filtering: is_assigned=true / false
         is_assigned = self.request.query_params.get("is_assigned")
@@ -117,3 +130,92 @@ class ExtensionTransportUpdateView(APIView):
 
     def post(self, request, id, *args, **kwargs):
         return self.patch(request, id, *args, **kwargs)
+
+
+def _extract_list(response_data, wrapper_key):
+    """
+    tcxconnect's client_api endpoints wrap their row list under a named key
+    (e.g. {"registrations": [...]}), but some deployments/proxies return the
+    bare list instead. Handle both shapes.
+    """
+    if isinstance(response_data, dict) and isinstance(response_data.get(wrapper_key), list):
+        return response_data[wrapper_key]
+    if isinstance(response_data, list):
+        return response_data
+    return None
+
+
+def _enrich_rows_with_user(rows, tenant, key, lookup_field):
+    """
+    Attaches the UnifiedCommunication user assigned to each row's extension,
+    under a new "user" key (None when no Extension/User match is found).
+
+    `key` is the row field holding the extension identifier; `lookup_field`
+    is the Extension model field it should be matched against
+    ("extension_number" or "sip_username", depending on what the upstream
+    tcxconnect endpoint reports).
+    """
+    values = [row.get(key) for row in rows]
+    extensions_by_value = {
+        getattr(ext, lookup_field): ext
+        for ext in Extension.objects.filter(
+            tenant=tenant, **{f"{lookup_field}__in": values}
+        ).select_related("user__tenant", "user__extension").prefetch_related(
+            "user__user_dids__did",
+            "user__did_department_assignments__department",
+            "user__tl_group_access__group__entries__department",
+        )
+    }
+    for row in rows:
+        ext = extensions_by_value.get(row.get(key))
+        user = getattr(ext, "user", None) if ext else None
+        row["user"] = UserDetailSerializer(user).data if user else None
+
+
+class ExtensionRegistrationsView(APIView):
+    """
+    GET /api/v1/extensions/registrations/
+    Online/offline status for every enabled extension in the tenant, with
+    extension number and name, proxied from FreeSWITCH via ESL. Each row is
+    enriched with the UnifiedCommunication user assigned to that extension,
+    if any.
+    """
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get(self, request, *args, **kwargs):
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        response = FreeSwitchClientService.proxy_request(
+            tenant=tenant,
+            method="GET",
+            endpoint_path="registrations/",
+        )
+
+        registrations = _extract_list(response.data, "registrations")
+        if response.status_code == status.HTTP_200_OK and registrations is not None:
+            _enrich_rows_with_user(registrations, tenant, key="extension", lookup_field="extension_number")
+
+        return response
+
+
+class ExtensionActiveCallsView(APIView):
+    """
+    GET /api/v1/extensions/active-calls/
+    Live active calls for the tenant, each with the connected extension,
+    proxied from FreeSWITCH via ESL. Each row is enriched with the
+    UnifiedCommunication user assigned to that extension, if any.
+    """
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get(self, request, *args, **kwargs):
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        response = FreeSwitchClientService.proxy_request(
+            tenant=tenant,
+            method="GET",
+            endpoint_path="calls/",
+        )
+
+        calls = _extract_list(response.data, "calls")
+        if response.status_code == status.HTTP_200_OK and calls is not None:
+            _enrich_rows_with_user(calls, tenant, key="extension", lookup_field="sip_username")
+
+        return response

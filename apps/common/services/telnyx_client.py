@@ -33,6 +33,63 @@ class TelnyxClientService:
         return settings.TELNYX_API_BASE_URL.rstrip("/")
 
     @classmethod
+    def get_balance(cls) -> dict:
+        """
+        Fetches the current account balance via `GET /v2/balance`.
+        Returns the parsed JSON response body's "data" object.
+        """
+        url = f"{cls._base_url()}/v2/balance"
+        timeout = getattr(settings, "TELNYX_API_TIMEOUT_SECONDS", 30.0)
+
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(url, headers=cls._headers())
+            resp.raise_for_status()
+            return resp.json().get("data", {})
+
+    @classmethod
+    def get_usage_report(
+        cls,
+        product: str,
+        start_date: str,
+        end_date: str,
+        metrics: Optional[list] = None,
+        dimensions: Optional[list] = None,
+    ) -> dict:
+        """
+        Fetches usage/cost data via `GET /v2/usage_reports`.
+
+        `product` is required by Telnyx (e.g. "sip-trunking" for voice trunk
+        usage). `start_date`/`end_date` must be ISO 8601 and span at most 31
+        days per Telnyx's limit. `metrics` defaults to ["cost"]. `dimensions`
+        is REQUIRED by Telnyx (a 400 "Dimensions invalid values" is returned
+        if omitted, despite the public docs implying it's optional) — it
+        defaults to ["date"], which still yields a single summable total
+        when the caller only wants an aggregate.
+
+        Telnyx expects repeated plain keys ("metrics=cost&metrics=connected"),
+        NOT PHP/Rails-style bracket params ("metrics[]=cost") — sending
+        bracket params here previously caused Telnyx to reject both metrics
+        and dimensions as invalid, even when only one was actually malformed.
+
+        Returns the parsed JSON response body (with "data" and "meta" keys).
+        """
+        url = f"{cls._base_url()}/v2/usage_reports"
+        params = [
+            ("product", product),
+            ("start_date", start_date),
+            ("end_date", end_date),
+        ]
+        params += [("metrics", m) for m in (metrics or ["cost"])]
+        params += [("dimensions", d) for d in (dimensions or ["date"])]
+
+        timeout = getattr(settings, "TELNYX_API_TIMEOUT_SECONDS", 30.0)
+
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(url, headers=cls._headers(), params=params)
+            resp.raise_for_status()
+            return resp.json()
+
+    @classmethod
     def send_message(
         cls,
         messaging_profile_id: str,
