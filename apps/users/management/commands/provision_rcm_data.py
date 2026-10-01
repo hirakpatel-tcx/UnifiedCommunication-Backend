@@ -3,8 +3,11 @@ apps/users/management/commands/provision_rcm_data.py
 ──────────────────────────────────────────────────────
 Idempotent one-shot provisioning for the RCM department/division/account/
 DID/user setup built out in this session. Safe to re-run — every step uses
-get_or_create, so running it twice does not create duplicates or touch
-existing data.
+get_or_create, so running it twice does not create duplicates. For a user
+that already exists, re-running still backfills their DID access
+(UserDID) and division/department work assignment (UserDIDDivisionAssignment)
+if those are missing — e.g. after adding a new account/department mapping,
+or after this command's DID-assignment logic itself changed.
 
 Does NOT send any welcome/invite emails. New users are created with a
 random temp password that is immediately discarded (never logged, never
@@ -20,7 +23,7 @@ Usage:
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.dids.models import Account, DID, Department, Division, UserDIDDivisionAssignment
+from apps.dids.models import Account, DID, Department, Division, UserDID, UserDIDDivisionAssignment
 from apps.extensions.models import Extension
 from apps.tenants.models import Tenant
 from apps.users.models import User
@@ -215,44 +218,54 @@ class Command(BaseCommand):
         )
 
         for first, last, email, account_name, department_name, is_team_lead in USERS:
-            if User.objects.filter(email=email).exists():
-                self.stdout.write(f"  skip {email}: already exists")
-                continue
+            user = User.objects.filter(email=email).first()
 
-            while str(next_ext) in existing_ext_numbers:
+            if user is None:
+                while str(next_ext) in existing_ext_numbers:
+                    next_ext += 1
+                ext_number = str(next_ext)
                 next_ext += 1
-            ext_number = str(next_ext)
-            next_ext += 1
-            existing_ext_numbers.add(ext_number)
+                existing_ext_numbers.add(ext_number)
 
-            if dry_run:
-                did_label = f"{account_name}/{department_name}" if account_name else "(none)"
-                self.stdout.write(f"  would create {email} ext={ext_number} did_tag={did_label} team_lead={is_team_lead}")
-                continue
+                if dry_run:
+                    did_label = f"{account_name}/{department_name}" if account_name else "(none)"
+                    self.stdout.write(f"  would create {email} ext={ext_number} did_tag={did_label} team_lead={is_team_lead}")
+                    continue
 
-            raw_password = generate_temp_password()
-            user = User.objects.create_user(
-                email=email,
-                password=raw_password,
-                tenant=tenant,
-                first_name=first,
-                last_name=last,
-                role="user",
-                is_team_lead=is_team_lead,
-                is_first_login=True,
-                must_change_password=True,
-            )
-            del raw_password  # never logged, never persisted
+                raw_password = generate_temp_password()
+                user = User.objects.create_user(
+                    email=email,
+                    password=raw_password,
+                    tenant=tenant,
+                    first_name=first,
+                    last_name=last,
+                    role="user",
+                    is_team_lead=is_team_lead,
+                    is_first_login=True,
+                    must_change_password=True,
+                )
+                del raw_password  # never logged, never persisted
 
-            Extension.objects.create(
-                tenant=tenant,
-                freeswitch_object_id=str(uuid.uuid4()),
-                extension_number=ext_number,
-                sip_username=f"{ext_number}-{tenant.tenant_code}",
-                encrypted_sip_password=SecretService.encrypt(generate_temp_password()),
-                user=user,
-            )
+                Extension.objects.create(
+                    tenant=tenant,
+                    freeswitch_object_id=str(uuid.uuid4()),
+                    extension_number=ext_number,
+                    sip_username=f"{ext_number}-{tenant.tenant_code}",
+                    encrypted_sip_password=SecretService.encrypt(generate_temp_password()),
+                    user=user,
+                )
+                created_users.append(email)
+                self.stdout.write(self.style.SUCCESS(f"  created {email} ext={ext_number}"))
+            else:
+                if dry_run:
+                    self.stdout.write(f"  exists {email} (would still check DID access/assignment)")
+                    continue
+                self.stdout.write(f"  exists {email}")
 
+            # DID access + work-assignment backfill — runs for both newly
+            # created and pre-existing users, so re-running this command
+            # after a schema/data change (e.g. adding UserDID access) heals
+            # anyone created before that change.
             if account_name and department_name:
                 did_number = next(
                     (n for n, d, a in DID_DEPARTMENT_ACCOUNT if d == department_name and a == account_name),
@@ -260,11 +273,15 @@ class Command(BaseCommand):
                 )
                 did = DID.objects.filter(tenant=tenant, number=did_number).first() if did_number else None
                 if did:
-                    UserDIDDivisionAssignment.objects.get_or_create(
+                    # Raw access grant — gives the user actual calling/
+                    # messaging access to this DID (separate from the work-
+                    # assignment record below, which only drives CDR/log
+                    # scoping).
+                    _ud, ud_created = UserDID.objects.get_or_create(user=user, did=did)
+                    _uda, uda_created = UserDIDDivisionAssignment.objects.get_or_create(
                         user=user, did=did, division=division_dental, department=did.department,
                     )
-
-            created_users.append(email)
-            self.stdout.write(self.style.SUCCESS(f"  created {email} ext={ext_number}"))
+                    if ud_created or uda_created:
+                        self.stdout.write(f"    backfilled DID access/assignment for {email}: {did.number}")
 
         return created_users
