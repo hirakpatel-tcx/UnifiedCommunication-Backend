@@ -4,17 +4,22 @@ apps/dids/views.py
 REST API views for DID listing and details.
 """
 
-from django.db.models import Q
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.common.permissions import IsAdminOrSuperAdmin
 from apps.common.tenant_resolver import get_scoped_tenant
-from apps.common.tl_scoping import resolve_tl_did_ids, resolve_tl_department_ids
+from apps.common.tl_scoping import (
+    resolve_tl_did_ids,
+    resolve_tl_department_ids,
+    resolve_tl_division_ids,
+)
 from apps.dids.models import (
     DID,
     Department,
-    UserDIDDepartmentAssignment,
+    Division,
+    Account,
+    UserDIDDivisionAssignment,
     AccessGroup,
     AccessGroupEntry,
     TLGroupAccess,
@@ -22,7 +27,9 @@ from apps.dids.models import (
 from apps.dids.serializers import (
     DIDSerializer,
     DepartmentSerializer,
-    UserDIDDepartmentAssignmentSerializer,
+    DivisionSerializer,
+    AccountSerializer,
+    UserDIDDivisionAssignmentSerializer,
     AccessGroupSerializer,
     AccessGroupEntrySerializer,
     TLGroupAccessSerializer,
@@ -41,11 +48,16 @@ class DIDListView(generics.ListAPIView):
 
     def get_queryset(self):
         tenant = get_scoped_tenant(self.request)
-        qs = DID.objects.filter(tenant=tenant).select_related("tenant").prefetch_related("user_dids__user")
+        qs = (
+            DID.objects.filter(tenant=tenant)
+            .select_related("tenant", "department", "account")
+            .prefetch_related("user_dids__user")
+        )
 
         # Team Leads are restricted to DIDs named in their granted
-        # AccessGroup entries (TLGroupAccess). Grants resolving to zero DIDs
-        # correctly yield an empty listing rather than the tenant-wide list.
+        # AccessGroup entries (TLGroupAccess), including DIDs reached via a
+        # department-scoped grant. Grants resolving to zero DIDs correctly
+        # yield an empty listing rather than the tenant-wide list.
         user = self.request.user
         if not (user.is_superuser or getattr(user, "role", "") == "superadmin"):
             tl_did_ids = resolve_tl_did_ids(user)
@@ -58,13 +70,27 @@ class DIDListView(generics.ListAPIView):
             qs = qs.filter(number__icontains=search)
 
         # Department filter (multi-select): ?department_id=1,2,3
-        # A DID matches if any caller works it under that department.
         department_id = self.request.query_params.get("department_id")
         if department_id:
             department_ids = [d.strip() for d in department_id.split(",") if d.strip()]
             if department_ids:
+                qs = qs.filter(department_id__in=department_ids)
+
+        # Account filter (multi-select): ?account_id=1,2,3
+        account_id = self.request.query_params.get("account_id")
+        if account_id:
+            account_ids = [a.strip() for a in account_id.split(",") if a.strip()]
+            if account_ids:
+                qs = qs.filter(account_id__in=account_ids)
+
+        # Division filter (multi-select): ?division_id=1,2,3
+        # A DID matches if any caller works it under that division.
+        division_id = self.request.query_params.get("division_id")
+        if division_id:
+            division_ids = [t.strip() for t in division_id.split(",") if t.strip()]
+            if division_ids:
                 qs = qs.filter(
-                    user_department_assignments__department_id__in=department_ids
+                    user_division_assignments__division_id__in=division_ids
                 ).distinct()
 
         # User filter (multi-select): ?user_id=1,2,3
@@ -90,7 +116,7 @@ class DIDDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        qs = DID.objects.select_related("tenant").prefetch_related("user_dids__user").all()
+        qs = DID.objects.select_related("tenant", "department", "account").prefetch_related("user_dids__user").all()
         if user.is_superuser or user.role == "superadmin":
             return qs
         if user.tenant_id:
@@ -104,14 +130,18 @@ class DIDDetailView(generics.RetrieveAPIView):
 
 class DepartmentListCreateView(generics.ListCreateAPIView):
     """
-    GET  /api/v1/dids/departments/  — list all departments (global, not tenant-scoped).
+    GET  /api/v1/dids/departments/  — list departments scoped to a tenant.
     POST /api/v1/dids/departments/  — create a department.
+    For superadmin: 'tenant_id' query parameter or 'X-Tenant-ID' header is required.
+    For admin: automatically scoped to the user's tenant.
     """
     serializer_class = DepartmentSerializer
     permission_classes = [IsAdminOrSuperAdmin]
 
     def get_queryset(self):
-        qs = Department.objects.all().order_by("name")
+        tenant = get_scoped_tenant(self.request)
+        qs = Department.objects.filter(tenant=tenant).select_related("tenant")
+
         user = self.request.user
         if self.request.method == "GET" and not (
             user.is_superuser or getattr(user, "role", "") == "superadmin"
@@ -120,21 +150,9 @@ class DepartmentListCreateView(generics.ListCreateAPIView):
             if tl_department_ids is not None:
                 qs = qs.filter(id__in=tl_department_ids)
 
-        # DID filter (multi-select): ?did_id=1,2,3
-        # A department matches if any caller works that DID under it.
-        did_id = self.request.query_params.get("did_id")
-        if did_id:
-            did_ids = [d.strip() for d in did_id.split(",") if d.strip()]
-            if did_ids:
-                qs = qs.filter(user_did_assignments__did_id__in=did_ids).distinct()
-
-        # User filter (multi-select): ?user_id=1,2,3
-        # A department matches if that user works any DID under it.
-        user_id = self.request.query_params.get("user_id")
-        if user_id:
-            user_ids = [u.strip() for u in user_id.split(",") if u.strip()]
-            if user_ids:
-                qs = qs.filter(user_did_assignments__user_id__in=user_ids).distinct()
+        search = self.request.query_params.get("search")
+        if search:
+            qs = qs.filter(name__icontains=search)
 
         return qs
 
@@ -145,44 +163,138 @@ class DepartmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     serializer_class = DepartmentSerializer
     permission_classes = [IsAdminOrSuperAdmin]
-    queryset = Department.objects.all()
+    lookup_field = "id"
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Department.objects.select_related("tenant").all()
+        if user.is_superuser or user.role == "superadmin":
+            return qs
+        if user.tenant_id:
+            return qs.filter(tenant_id=user.tenant_id)
+        return qs.none()
+
+
+# ---------------------------------------------------------------------------
+# Account
+# ---------------------------------------------------------------------------
+
+class AccountListCreateView(generics.ListCreateAPIView):
+    """
+    GET  /api/v1/dids/accounts/  — list all accounts (global, not tenant-scoped).
+    POST /api/v1/dids/accounts/  — create an account.
+    """
+    serializer_class = AccountSerializer
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get_queryset(self):
+        qs = Account.objects.all().order_by("name")
+
+        # DID filter (multi-select): ?did_id=1,2,3
+        did_id = self.request.query_params.get("did_id")
+        if did_id:
+            did_ids = [d.strip() for d in did_id.split(",") if d.strip()]
+            if did_ids:
+                qs = qs.filter(dids__id__in=did_ids).distinct()
+
+        return qs
+
+
+class AccountDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET/PATCH/DELETE /api/v1/dids/accounts/{id}/
+    """
+    serializer_class = AccountSerializer
+    permission_classes = [IsAdminOrSuperAdmin]
+    queryset = Account.objects.all()
     lookup_field = "id"
 
 
 # ---------------------------------------------------------------------------
-# UserDIDDepartmentAssignment — caller work assignment
+# Division
 # ---------------------------------------------------------------------------
 
-class UserDIDDepartmentAssignmentListCreateView(generics.ListCreateAPIView):
+class DivisionListCreateView(generics.ListCreateAPIView):
     """
-    GET  /api/v1/dids/department-assignments/  — list assignments.
-         Filter by ?user_id=, ?did_id=, ?department_id=.
-    POST /api/v1/dids/department-assignments/  — assign a caller to a DID + Department.
+    GET  /api/v1/dids/divisions/  — list all divisions (global, not tenant-scoped).
+    POST /api/v1/dids/divisions/  — create a division.
     """
-    serializer_class = UserDIDDepartmentAssignmentSerializer
+    serializer_class = DivisionSerializer
     permission_classes = [IsAdminOrSuperAdmin]
 
     def get_queryset(self):
-        qs = UserDIDDepartmentAssignment.objects.select_related("user", "did", "department")
+        qs = Division.objects.all().order_by("name")
+        user = self.request.user
+        if self.request.method == "GET" and not (
+            user.is_superuser or getattr(user, "role", "") == "superadmin"
+        ):
+            tl_division_ids = resolve_tl_division_ids(user)
+            if tl_division_ids is not None:
+                qs = qs.filter(id__in=tl_division_ids)
+
+        # DID filter (multi-select): ?did_id=1,2,3
+        # A division matches if any caller works that DID under it.
+        did_id = self.request.query_params.get("did_id")
+        if did_id:
+            did_ids = [d.strip() for d in did_id.split(",") if d.strip()]
+            if did_ids:
+                qs = qs.filter(user_did_assignments__did_id__in=did_ids).distinct()
+
+        # User filter (multi-select): ?user_id=1,2,3
+        # A division matches if that user works any DID under it.
+        user_id = self.request.query_params.get("user_id")
+        if user_id:
+            user_ids = [u.strip() for u in user_id.split(",") if u.strip()]
+            if user_ids:
+                qs = qs.filter(user_did_assignments__user_id__in=user_ids).distinct()
+
+        return qs
+
+
+class DivisionDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET/PATCH/DELETE /api/v1/dids/divisions/{id}/
+    """
+    serializer_class = DivisionSerializer
+    permission_classes = [IsAdminOrSuperAdmin]
+    queryset = Division.objects.all()
+    lookup_field = "id"
+
+
+# ---------------------------------------------------------------------------
+# UserDIDDivisionAssignment — caller work assignment
+# ---------------------------------------------------------------------------
+
+class UserDIDDivisionAssignmentListCreateView(generics.ListCreateAPIView):
+    """
+    GET  /api/v1/dids/division-assignments/  — list assignments.
+         Filter by ?user_id=, ?did_id=, ?division_id=.
+    POST /api/v1/dids/division-assignments/  — assign a caller to a DID + Division.
+    """
+    serializer_class = UserDIDDivisionAssignmentSerializer
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get_queryset(self):
+        qs = UserDIDDivisionAssignment.objects.select_related("user", "did", "division")
         user_id = self.request.query_params.get("user_id")
         did_id = self.request.query_params.get("did_id")
-        department_id = self.request.query_params.get("department_id")
+        division_id = self.request.query_params.get("division_id")
         if user_id:
             qs = qs.filter(user_id=user_id)
         if did_id:
             qs = qs.filter(did_id=did_id)
-        if department_id:
-            qs = qs.filter(department_id=department_id)
+        if division_id:
+            qs = qs.filter(division_id=division_id)
         return qs.order_by("user__email", "did__number")
 
 
-class UserDIDDepartmentAssignmentDetailView(generics.RetrieveDestroyAPIView):
+class UserDIDDivisionAssignmentDetailView(generics.RetrieveDestroyAPIView):
     """
-    GET/DELETE /api/v1/dids/department-assignments/{id}/
+    GET/DELETE /api/v1/dids/division-assignments/{id}/
     """
-    serializer_class = UserDIDDepartmentAssignmentSerializer
+    serializer_class = UserDIDDivisionAssignmentSerializer
     permission_classes = [IsAdminOrSuperAdmin]
-    queryset = UserDIDDepartmentAssignment.objects.select_related("user", "did", "department")
+    queryset = UserDIDDivisionAssignment.objects.select_related("user", "did", "division")
     lookup_field = "id"
 
 
@@ -197,7 +309,9 @@ class AccessGroupListCreateView(generics.ListCreateAPIView):
     """
     serializer_class = AccessGroupSerializer
     permission_classes = [IsAdminOrSuperAdmin]
-    queryset = AccessGroup.objects.prefetch_related("entries__did", "entries__department").order_by("name")
+    queryset = AccessGroup.objects.prefetch_related(
+        "entries__did", "entries__department", "entries__division"
+    ).order_by("name")
 
 
 class AccessGroupDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -206,20 +320,25 @@ class AccessGroupDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     serializer_class = AccessGroupSerializer
     permission_classes = [IsAdminOrSuperAdmin]
-    queryset = AccessGroup.objects.prefetch_related("entries__did", "entries__department")
+    queryset = AccessGroup.objects.prefetch_related(
+        "entries__did", "entries__department", "entries__division"
+    )
     lookup_field = "id"
 
 
 class AccessGroupEntryListCreateView(generics.ListCreateAPIView):
     """
     GET  /api/v1/dids/access-groups/{group_id}/entries/  — list entries in a group.
-    POST /api/v1/dids/access-groups/{group_id}/entries/  — add a DID (+ optional Department) rule.
+    POST /api/v1/dids/access-groups/{group_id}/entries/  — add a rule granting
+         either a single DID or a whole Department (+ optional Division).
     """
     serializer_class = AccessGroupEntrySerializer
     permission_classes = [IsAdminOrSuperAdmin]
 
     def get_queryset(self):
-        return AccessGroupEntry.objects.filter(group_id=self.kwargs["group_id"]).select_related("did", "department")
+        return AccessGroupEntry.objects.filter(group_id=self.kwargs["group_id"]).select_related(
+            "did", "department", "division"
+        )
 
     def perform_create(self, serializer):
         serializer.save(group_id=self.kwargs["group_id"])
@@ -234,7 +353,9 @@ class AccessGroupEntryDetailView(generics.RetrieveDestroyAPIView):
     lookup_field = "id"
 
     def get_queryset(self):
-        return AccessGroupEntry.objects.filter(group_id=self.kwargs["group_id"]).select_related("did", "department")
+        return AccessGroupEntry.objects.filter(group_id=self.kwargs["group_id"]).select_related(
+            "did", "department", "division"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -280,11 +401,11 @@ class MyLogAccessRosterView(APIView):
     GET /api/v1/dids/my-log-access-roster/
 
     Resolves the requesting user's own TLGroupAccess grants into a roster:
-    one row per (caller, DID, Department) they are permitted to see call
-    logs for, with the caller's extension number attached. This is the
-    "who am I looking at" view for the TL Logs section — a companion to
-    the CDR endpoints, which use the same underlying resolution to scope
-    the actual call records (see apps.common.cdr_views._resolve_tl_extensions).
+    one row per (caller, DID, Division) they are permitted to see call logs
+    for, with the caller's extension number attached. This is the "who am
+    I looking at" view for the TL Logs section — a companion to the CDR
+    endpoints, which use the same underlying resolution to scope the
+    actual call records (see apps.common.cdr_views._resolve_tl_extensions).
 
     Every authenticated user can call this — it only ever returns rows
     derived from their own grants, and returns an empty list for a user
@@ -296,21 +417,30 @@ class MyLogAccessRosterView(APIView):
         user = request.user
 
         group_ids = TLGroupAccess.objects.filter(user=user).values_list("group_id", flat=True)
-        entries = AccessGroupEntry.objects.filter(group_id__in=group_ids).select_related("did", "department")
+        entries = AccessGroupEntry.objects.filter(group_id__in=group_ids).select_related(
+            "did", "department", "division"
+        )
 
         roster = []
         seen = set()
         for entry in entries:
-            qs = UserDIDDepartmentAssignment.objects.filter(did_id=entry.did_id).select_related(
-                "user__extension", "did", "department"
+            if entry.did_id is not None:
+                did_ids = [entry.did_id]
+            else:
+                did_ids = list(DID.objects.filter(department_id=entry.department_id).values_list("id", flat=True))
+            if not did_ids:
+                continue
+
+            qs = UserDIDDivisionAssignment.objects.filter(did_id__in=did_ids).select_related(
+                "user__extension", "did", "division"
             )
-            if entry.department_id is not None:
-                qs = qs.filter(department_id=entry.department_id)
+            if entry.division_id is not None:
+                qs = qs.filter(division_id=entry.division_id)
 
             for assignment in qs:
                 caller = assignment.user
                 ext = getattr(caller, "extension", None)
-                key = (caller.id, assignment.did_id, assignment.department_id)
+                key = (caller.id, assignment.did_id, assignment.division_id)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -322,9 +452,9 @@ class MyLogAccessRosterView(APIView):
                     "extension_number": ext.extension_number if ext else None,
                     "did": assignment.did_id,
                     "did_number": assignment.did.number,
-                    "department": assignment.department_id,
-                    "department_name": assignment.department.name,
+                    "division": assignment.division_id,
+                    "division_name": assignment.division.name,
                 })
 
-        roster.sort(key=lambda row: (row["department_name"], row["did_number"], row["user_email"]))
+        roster.sort(key=lambda row: (row["division_name"], row["did_number"], row["user_email"]))
         return Response(roster)

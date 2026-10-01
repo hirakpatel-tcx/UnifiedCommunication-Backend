@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
 from apps.users.models import User
 from apps.extensions.models import Extension
-from apps.dids.models import UserDID, UserDIDDepartmentAssignment
+from apps.dids.models import UserDID, UserDIDDivisionAssignment
 
 
 class ExtensionInline(admin.StackedInline):
@@ -19,19 +19,19 @@ class UserDIDInline(admin.TabularInline):
     autocomplete_fields = ("did",)
 
 
-class UserDIDDepartmentAssignmentInline(admin.TabularInline):
-    model = UserDIDDepartmentAssignment
+class UserDIDDivisionAssignmentInline(admin.TabularInline):
+    model = UserDIDDivisionAssignment
     extra = 0
-    verbose_name = "DID / Department Assignment"
-    verbose_name_plural = "DID / Department Assignments"
-    autocomplete_fields = ("did", "department")
+    verbose_name = "DID / Division Assignment"
+    verbose_name_plural = "DID / Division Assignments"
+    autocomplete_fields = ("did", "division")
 
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
     list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant")
-    inlines = [ExtensionInline, UserDIDInline, UserDIDDepartmentAssignmentInline]
+    inlines = [ExtensionInline, UserDIDInline, UserDIDDivisionAssignmentInline]
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         ("Personal Info", {"fields": ("first_name", "last_name")}),

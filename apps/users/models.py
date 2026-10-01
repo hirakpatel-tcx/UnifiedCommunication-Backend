@@ -123,7 +123,7 @@ class User(AbstractBaseUser, PermissionsMixin):
             "Marks this user as a Team Lead. Independent of role — a Team Lead "
             "is typically an 'admin' but this is not enforced. Controls eligibility "
             "for TLGroupAccess grants (call-log/report visibility scoped by DID and "
-            "Department); does not itself grant any access."
+            "Division); does not itself grant any access."
         ),
     )
 

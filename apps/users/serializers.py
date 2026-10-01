@@ -13,7 +13,7 @@ from rest_framework import serializers
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from apps.common.services.secret_service import SecretService
-from apps.dids.models import DID, UserDID, Department, UserDIDDepartmentAssignment
+from apps.dids.models import DID, UserDID, Division, Department, UserDIDDivisionAssignment
 from apps.extensions.models import Extension
 from apps.tenants.models import Tenant
 from apps.users.models import User, UserRole
@@ -71,7 +71,7 @@ class PermissionSerializer(serializers.ModelSerializer):
 class UserPermissionsSerializer(serializers.ModelSerializer):
     """
     Read/write representation of a single user's directly-assigned permissions
-    (e.g. 'add_did', 'change_userdiddepartmentassignment', 'delete_department').
+    (e.g. 'add_did', 'change_userdidteamassignment', 'delete_team').
     Does not include group-inherited permissions — this endpoint manages
     per-admin overrides, not roles.
     """
@@ -112,7 +112,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     extension = ExtensionSummarySerializer(read_only=True)
     dids = UserDIDSummarySerializer(source="user_dids", many=True, read_only=True)
     features = serializers.SerializerMethodField()
-    departments = serializers.SerializerMethodField()
+    divisions = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -128,7 +128,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
             "features",
             "extension",
             "dids",
-            "departments",
+            "divisions",
             "fax_boxes",
             "voicemail_boxes",
             "is_first_login",
@@ -136,25 +136,25 @@ class UserDetailSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-    def get_departments(self, obj) -> list:
+    def get_divisions(self, obj) -> list:
         """
-        Departments this user is associated with, for either reason:
-        - a regular caller's work assignment (UserDIDDepartmentAssignment), or
+        Divisions this user is associated with, for either reason:
+        - a regular caller's work assignment (UserDIDDivisionAssignment), or
         - a Team Lead's reporting grant (TLGroupAccess → AccessGroupEntry).
-        A TL grant with department=None ("all departments on this DID")
-        contributes no specific department name here.
+        A TL grant with division=None ("all divisions on this DID")
+        contributes no specific division name here.
         """
-        departments = {
-            a.department_id: a.department.name
-            for a in obj.did_department_assignments.select_related("department").all()
+        divisions = {
+            a.division_id: a.division.name
+            for a in obj.did_division_assignments.select_related("division").all()
         }
-        for grant in obj.tl_group_access.select_related("group").prefetch_related("group__entries__department").all():
+        for grant in obj.tl_group_access.select_related("group").prefetch_related("group__entries__division").all():
             for entry in grant.group.entries.all():
-                if entry.department_id:
-                    departments[entry.department_id] = entry.department.name
+                if entry.division_id:
+                    divisions[entry.division_id] = entry.division.name
         return [
-            {"id": dept_id, "name": name}
-            for dept_id, name in sorted(departments.items(), key=lambda item: item[1])
+            {"id": division_id, "name": name}
+            for division_id, name in sorted(divisions.items(), key=lambda item: item[1])
         ]
 
     def get_features(self, obj) -> dict:
@@ -332,8 +332,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
     tenant_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     sip_domain = serializers.CharField(required=False, allow_blank=True, default="")
     extension_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    did_ids = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
-    department_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    did_assignments = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
     fax_boxes = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
     voicemail_boxes = serializers.ListField(child=serializers.IntegerField(min_value=0), required=False, allow_empty=True)
 
@@ -354,8 +353,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "notify",
             "generate_temp_password",
             "extension_id",
-            "did_ids",
-            "department_id",
+            "did_assignments",
             "fax_boxes",
             "voicemail_boxes",
             "created_at",
@@ -391,16 +389,39 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             except DjangoValidationError as e:
                 raise serializers.ValidationError({"voicemail_boxes": e.messages})
 
-        # A department only means something paired with a DID — resolve it
-        # up front so create()/update() can apply it to every did_id.
-        department_ref = attrs.get("department_id")
-        if department_ref not in (None, "", "null"):
-            department = Department.objects.filter(id=department_ref).first()
-            if not department:
-                raise serializers.ValidationError({"department_id": f"Department '{department_ref}' not found."})
-            attrs["_department"] = department
-        else:
-            attrs["_department"] = None
+        # Each did_assignments row is {"did_id": ..., "division_id": ...,
+        # "department_id": ...} (division_id/department_id optional).
+        # Resolve them up front so create()/update() can apply each row to
+        # its own DID — unlike a flat did_ids list, this lets one user work
+        # different DIDs under different divisions/departments in a single
+        # request.
+        if "did_assignments" in attrs:
+            resolved_rows = []
+            for row in attrs["did_assignments"]:
+                did_ref = row.get("did_id")
+                if not did_ref:
+                    raise serializers.ValidationError({"did_assignments": "Each entry requires a 'did_id'."})
+
+                division = None
+                division_ref = row.get("division_id")
+                if division_ref not in (None, "", "null"):
+                    division = Division.objects.filter(id=division_ref).first()
+                    if not division:
+                        raise serializers.ValidationError(
+                            {"did_assignments": f"Division '{division_ref}' not found."}
+                        )
+
+                department = None
+                department_ref = row.get("department_id")
+                if department_ref not in (None, "", "null"):
+                    department = Department.objects.filter(id=department_ref).first()
+                    if not department:
+                        raise serializers.ValidationError(
+                            {"did_assignments": f"Department '{department_ref}' not found."}
+                        )
+
+                resolved_rows.append({"did_id": did_ref, "division": division, "department": department})
+            attrs["_did_assignments"] = resolved_rows
 
         return attrs
 
@@ -410,13 +431,12 @@ class UserUpsertSerializer(serializers.ModelSerializer):
         caller = request.user if request else None
 
         extension_ref = validated_data.pop("extension_id", None)
-        did_refs = validated_data.pop("did_ids", None)
+        validated_data.pop("did_assignments", None)
+        did_assignments = validated_data.pop("_did_assignments", None)
         raw_password = validated_data.pop("password", None)
         raw_tenant = validated_data.pop("tenant_id", None)
         validated_data.pop("notify", None)
         validated_data.pop("generate_temp_password", None)
-        validated_data.pop("department_id", None)
-        department = validated_data.pop("_department", None)
 
         is_temp_password = not raw_password
         if is_temp_password:
@@ -483,29 +503,28 @@ class UserUpsertSerializer(serializers.ModelSerializer):
                 Extension.objects.filter(user=user).update(user=None)
                 Extension.objects.filter(id=ext.id).update(user=user)
 
-        # Handle DIDs assignment
-        if did_refs is not None:
-            if not tenant and did_refs:
-                raise serializers.ValidationError({"did_ids": "Cannot assign DIDs without a tenant."})
+        # Handle DIDs assignment — each row carries its own division/department.
+        if did_assignments is not None:
+            if not tenant and did_assignments:
+                raise serializers.ValidationError({"did_assignments": "Cannot assign DIDs without a tenant."})
             calling_enabled = bool(tenant and (tenant.features or {}).get("calling", False))
             messaging_enabled = bool(tenant and (tenant.features or {}).get("messaging", False))
-            if did_refs and not calling_enabled and not messaging_enabled:
-                raise serializers.ValidationError({"did_ids": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."})
-            resolved_dids = []
-            for did_ref in did_refs:
-                did = _resolve_did(did_ref, tenant)
+            if did_assignments and not calling_enabled and not messaging_enabled:
+                raise serializers.ValidationError({"did_assignments": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."})
+            for row in did_assignments:
+                did = _resolve_did(row["did_id"], tenant)
                 if not did:
-                    raise serializers.ValidationError({"did_ids": f"DID '{did_ref}' not found in tenant."})
+                    raise serializers.ValidationError({"did_assignments": f"DID '{row['did_id']}' not found in tenant."})
                 UserDID.objects.get_or_create(user=user, did=did)
-                resolved_dids.append(did)
 
-            if department is not None:
-                for did in resolved_dids:
-                    UserDIDDepartmentAssignment.objects.filter(user=user, did=did).exclude(
-                        department=department
+                division = row["division"]
+                department = row["department"]
+                if division is not None:
+                    UserDIDDivisionAssignment.objects.filter(user=user, did=did).exclude(
+                        division=division, department=department
                     ).delete()
-                    UserDIDDepartmentAssignment.objects.get_or_create(
-                        user=user, did=did, department=department
+                    UserDIDDivisionAssignment.objects.get_or_create(
+                        user=user, did=did, division=division, department=department
                     )
 
         return user
@@ -515,12 +534,9 @@ class UserUpsertSerializer(serializers.ModelSerializer):
         has_ext = "extension_id" in validated_data
         extension_ref = validated_data.pop("extension_id", None)
 
-        has_dids = "did_ids" in validated_data
-        did_refs = validated_data.pop("did_ids", None)
-
-        has_department = "department_id" in validated_data
-        validated_data.pop("department_id", None)
-        department = validated_data.pop("_department", None)
+        has_dids = "did_assignments" in validated_data
+        validated_data.pop("did_assignments", None)
+        did_assignments = validated_data.pop("_did_assignments", None)
 
         raw_password = validated_data.pop("password", None)
         raw_tenant = validated_data.pop("tenant_id", None)
@@ -577,51 +593,42 @@ class UserUpsertSerializer(serializers.ModelSerializer):
                 Extension.objects.filter(user=instance).update(user=None)
                 Extension.objects.filter(id=ext.id).update(user=instance)
 
-        # Handle DIDs update if passed
-        target_dids = None
+        # Handle DIDs + per-DID division/department update if passed.
         if has_dids:
-            if not did_refs:
-                # Clear all assigned DIDs
+            if not did_assignments:
+                # Clear all assigned DIDs (and their division/department assignments).
                 UserDID.objects.filter(user=instance).delete()
-                target_dids = []
+                UserDIDDivisionAssignment.objects.filter(user=instance).delete()
             else:
                 if not tenant:
-                    raise serializers.ValidationError({"did_ids": "User has no tenant assigned."})
+                    raise serializers.ValidationError({"did_assignments": "User has no tenant assigned."})
                 calling_enabled = bool(tenant and (tenant.features or {}).get("calling", False))
                 messaging_enabled = bool(tenant and (tenant.features or {}).get("messaging", False))
                 if not calling_enabled and not messaging_enabled:
-                    raise serializers.ValidationError({"did_ids": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."})
+                    raise serializers.ValidationError({"did_assignments": "Both calling and messaging features are disabled for this tenant. Cannot assign DIDs."})
+
                 target_dids = []
-                for did_ref in did_refs:
-                    did = _resolve_did(did_ref, tenant)
+                for row in did_assignments:
+                    did = _resolve_did(row["did_id"], tenant)
                     if not did:
-                        raise serializers.ValidationError({"did_ids": f"DID '{did_ref}' not found in tenant."})
-                    target_dids.append(did)
+                        raise serializers.ValidationError({"did_assignments": f"DID '{row['did_id']}' not found in tenant."})
+                    target_dids.append((did, row["division"], row["department"]))
 
                 # Sync: remove unlisted, add new
-                UserDID.objects.filter(user=instance).exclude(did__in=target_dids).delete()
-                for d in target_dids:
-                    UserDID.objects.get_or_create(user=instance, did=d)
-
-        # Handle department update if passed. A department only means
-        # something paired with a DID, so it applies to did_ids from this
-        # same request if given, otherwise to the user's existing DIDs.
-        if has_department:
-            dids_for_department = target_dids if target_dids is not None else [
-                ud.did for ud in UserDID.objects.filter(user=instance).select_related("did")
-            ]
-            if department is None:
-                UserDIDDepartmentAssignment.objects.filter(
-                    user=instance, did__in=dids_for_department
-                ).delete()
-            else:
-                for did in dids_for_department:
-                    UserDIDDepartmentAssignment.objects.filter(user=instance, did=did).exclude(
-                        department=department
-                    ).delete()
-                    UserDIDDepartmentAssignment.objects.get_or_create(
-                        user=instance, did=did, department=department
-                    )
+                target_did_objs = [did for did, _division, _department in target_dids]
+                UserDID.objects.filter(user=instance).exclude(did__in=target_did_objs).delete()
+                UserDIDDivisionAssignment.objects.filter(user=instance).exclude(did__in=target_did_objs).delete()
+                for did, division, department in target_dids:
+                    UserDID.objects.get_or_create(user=instance, did=did)
+                    if division is not None:
+                        UserDIDDivisionAssignment.objects.filter(user=instance, did=did).exclude(
+                            division=division, department=department
+                        ).delete()
+                        UserDIDDivisionAssignment.objects.get_or_create(
+                            user=instance, did=did, division=division, department=department
+                        )
+                    else:
+                        UserDIDDivisionAssignment.objects.filter(user=instance, did=did).delete()
 
         return instance
 

@@ -51,7 +51,7 @@ class ExtensionListView(generics.ListAPIView):
         qs = Extension.objects.filter(tenant=tenant).select_related("tenant", "user")
 
         # Team Leads are restricted to the extensions of callers assigned to
-        # their granted DID/Department combinations (TLGroupAccess). Grants
+        # their granted DID/Division combinations (TLGroupAccess). Grants
         # resolving to zero extensions correctly yield an empty listing
         # rather than falling back to the tenant-wide list.
         user = self.request.user
@@ -162,8 +162,8 @@ def _enrich_rows_with_user(rows, tenant, key, lookup_field):
             tenant=tenant, **{f"{lookup_field}__in": values}
         ).select_related("user__tenant", "user__extension").prefetch_related(
             "user__user_dids__did",
-            "user__did_department_assignments__department",
-            "user__tl_group_access__group__entries__department",
+            "user__did_division_assignments__division",
+            "user__tl_group_access__group__entries__division",
         )
     }
     for row in rows:

@@ -37,6 +37,66 @@ from apps.common.models import TimestampedModel
 
 
 # ---------------------------------------------------------------------------
+# Department
+# ---------------------------------------------------------------------------
+
+class Department(TimestampedModel):
+    """
+    Top-level organizational grouping of DIDs, scoped to a Tenant.
+
+    Hierarchy: Department → DIDs → Divisions.
+    A Department groups a set of DIDs (e.g. "Medical" → DIDs 1..n); each
+    DID in turn has callers working it under one or more Divisions (tracked
+    on UserDIDDivisionAssignment, unchanged by this model).
+
+    Department is also a first-class TL log-visibility scoping unit: an
+    AccessGroupEntry may grant a TL an entire Department (all DIDs under
+    it) instead of naming a single DID — see AccessGroupEntry.department.
+    """
+
+    tenant = models.ForeignKey(
+        "tenants.Tenant",
+        on_delete=models.CASCADE,
+        related_name="departments",
+        help_text="The tenant this department belongs to.",
+    )
+    name = models.CharField(max_length=150)
+    code = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text=(
+            "Optional short display code/number for this department "
+            "(e.g. '1', 'D-100'), unique within the tenant. Purely a "
+            "display/reference label — not used for lookups."
+        ),
+    )
+
+    class Meta:
+        db_table = "departments"
+        verbose_name = "Department"
+        verbose_name_plural = "Departments"
+        ordering = ["tenant", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "name"],
+                name="uq_department_tenant_name",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "code"],
+                name="uq_department_tenant_code",
+                condition=models.Q(code__gt=""),
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.tenant.tenant_code})"
+
+    def __repr__(self) -> str:
+        return f"<Department id={self.id} name={self.name!r} tenant={self.tenant_id}>"
+
+
+# ---------------------------------------------------------------------------
 # DID
 # ---------------------------------------------------------------------------
 
@@ -64,6 +124,17 @@ class DID(TimestampedModel):
         related_name="dids",
         help_text="The tenant that OWNS this phone number.",
     )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dids",
+        help_text=(
+            "The department this DID is grouped under (optional). "
+            "Must belong to the same tenant as the DID."
+        ),
+    )
     freeswitch_object_id = models.CharField(
         max_length=255,
         help_text=(
@@ -84,6 +155,14 @@ class DID(TimestampedModel):
         blank=True,
         default="",
         help_text="Human-readable name or label for this DID (e.g. 'Main Line', 'Support').",
+    )
+    account = models.ForeignKey(
+        "Account",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dids",
+        help_text="The billing/client account this DID is grouped under (optional).",
     )
 
     class Meta:
@@ -176,24 +255,24 @@ class UserDID(TimestampedModel):
 
 
 # ---------------------------------------------------------------------------
-# Department
+# Division
 # ---------------------------------------------------------------------------
 
-class Department(TimestampedModel):
+class Division(TimestampedModel):
     """
-    Global lookup of RCM departments (e.g. EVBV, AR, Billing).
+    Global lookup of RCM divisions (e.g. EVBV, AR, Billing, Credentialing).
 
-    Not tied to a Tenant or DID — the same department names are shared
-    across clients. A caller's work assignment (which DID(s) they work,
-    under which department) is tracked on UserDIDDepartmentAssignment.
+    Not tied to a Tenant or DID — the same division names are shared across
+    clients. A caller's work assignment (which DID(s) they work, under
+    which division) is tracked on UserDIDDivisionAssignment.
     """
 
     name = models.CharField(max_length=100, unique=True)
 
     class Meta:
-        db_table = "departments"
-        verbose_name = "Department"
-        verbose_name_plural = "Departments"
+        db_table = "divisions"
+        verbose_name = "Division"
+        verbose_name_plural = "Divisions"
         ordering = ["name"]
 
     def __str__(self) -> str:
@@ -201,76 +280,120 @@ class Department(TimestampedModel):
 
 
 # ---------------------------------------------------------------------------
-# UserDIDDepartmentAssignment — caller work assignment
+# Account
 # ---------------------------------------------------------------------------
 
-class UserDIDDepartmentAssignment(TimestampedModel):
+class Account(TimestampedModel):
     """
-    Records which department a caller works under for a given DID.
+    Global lookup of client/billing accounts a DID can be grouped under
+    (e.g. Rockwell, Perry Ave, Parcare, General).
+
+    Not tied to a Tenant — the same account names are shared across
+    clients. A DID may optionally belong to one Account (see DID.account).
+    """
+
+    name = models.CharField(max_length=100, unique=True)
+
+    class Meta:
+        db_table = "accounts"
+        verbose_name = "Account"
+        verbose_name_plural = "Accounts"
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+# ---------------------------------------------------------------------------
+# UserDIDDivisionAssignment — caller work assignment
+# ---------------------------------------------------------------------------
+
+class UserDIDDivisionAssignment(TimestampedModel):
+    """
+    Records which division (and, optionally, which department) a caller
+    works under for a given DID.
 
     A caller (User) can be assigned to multiple DIDs, and each assignment
-    declares the department the caller works under for that DID
+    declares the division the caller works under for that DID
     (e.g. User A / DID 1 / EVBV, User A / DID 2 / EVBV, User B / DID 1 / AR).
 
+    A DID has a single DID.department, but the same DID can be worked by
+    different callers under different departments (e.g. one caller handles
+    DID X for "AR", another handles DID X for "EV"). The optional
+    department field here lets an assignment override DID.department for
+    that specific caller; leaving it null means "use DID.department".
+
     This is separate from UserDID (which only grants raw DID access) because
-    the department is required here to support CDR log scoping — a TL's
-    AccessGroup grants visibility by (DID, Department), and this table is
-    what resolves that back to the set of extensions who actually worked
-    under that DID/department combination.
+    the division is required here to support CDR log scoping — a TL's
+    AccessGroup grants visibility by (DID, Division), and this table is what
+    resolves that back to the set of extensions who actually worked under
+    that DID/division combination.
     """
 
     user = models.ForeignKey(
         "users.User",
         on_delete=models.CASCADE,
-        related_name="did_department_assignments",
-        help_text="The caller being assigned to work this DID under this department.",
+        related_name="did_division_assignments",
+        help_text="The caller being assigned to work this DID under this division.",
     )
     did = models.ForeignKey(
         DID,
         on_delete=models.CASCADE,
-        related_name="user_department_assignments",
+        related_name="user_division_assignments",
         help_text="The DID the caller works.",
+    )
+    division = models.ForeignKey(
+        Division,
+        on_delete=models.CASCADE,
+        related_name="user_did_assignments",
+        help_text="The division the caller works under for this DID.",
     )
     department = models.ForeignKey(
         Department,
-        on_delete=models.PROTECT,
-        related_name="user_did_assignments",
-        help_text="The department the caller works under for this DID.",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="user_did_division_assignments",
+        help_text=(
+            "The department this caller works this DID under (optional). "
+            "Leave blank to use the DID's own department."
+        ),
     )
 
     class Meta:
-        db_table = "user_did_department_assignments"
-        verbose_name = "User DID Department Assignment"
-        verbose_name_plural = "User DID Department Assignments"
+        db_table = "user_did_division_assignments"
+        verbose_name = "User DID Division Assignment"
+        verbose_name_plural = "User DID Division Assignments"
         constraints = [
             models.UniqueConstraint(
-                fields=["user", "did", "department"],
-                name="uq_user_did_department_assignment",
+                fields=["user", "did", "division", "department"],
+                name="uq_user_did_division_assignment",
             ),
         ]
         indexes = [
             models.Index(fields=["user"], name="idx_uddassign_user"),
             models.Index(fields=["did"], name="idx_uddassign_did"),
+            models.Index(fields=["division"], name="idx_uddassign_division"),
             models.Index(fields=["department"], name="idx_uddassign_department"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.user.email} → {self.did.number} ({self.department.name})"
+        return f"{self.user.email} → {self.did.number} ({self.division.name})"
 
     def __repr__(self) -> str:
         return (
-            f"<UserDIDDepartmentAssignment id={self.id} "
-            f"user={self.user_id} did={self.did_id} department={self.department_id}>"
+            f"<UserDIDDivisionAssignment id={self.id} "
+            f"user={self.user_id} did={self.did_id} division={self.division_id}>"
         )
 
 
 # ---------------------------------------------------------------------------
-# AccessGroup — reusable log-visibility bundle (DID + Department)
+# AccessGroup — reusable log-visibility bundle (DID + Division)
 # ---------------------------------------------------------------------------
 
 class AccessGroup(TimestampedModel):
     """
-    A reusable, named bundle of (DID, Department) report-scope rules.
+    A reusable, named bundle of (DID, Division) report-scope rules.
 
     An AccessGroup does NOT represent DIDs assigned to any particular TL —
     it is purely a log-visibility scope definition (e.g. "Clinic 1 - Full",
@@ -293,10 +416,19 @@ class AccessGroup(TimestampedModel):
 
 class AccessGroupEntry(TimestampedModel):
     """
-    One (DID, Department) rule inside an AccessGroup.
+    One log-visibility rule inside an AccessGroup, in one of two shapes:
 
-    department is nullable: a null department means "all departments on
-    this DID" within the group.
+      - DID-scoped:        did is set, department is null.
+                            division nullable — null means "all divisions on
+                            this DID".
+      - Department-scoped: department is set, did is null. Grants every
+                            DID under that department (present now and
+                            added later). division nullable — null means "all
+                            divisions on every DID in this department".
+
+    Exactly one of (did, department) must be set — enforced in
+    AccessGroupEntrySerializer.validate() (a DB-level XOR CHECK constraint
+    is avoided here since it can't easily express "not both null").
     """
 
     group = models.ForeignKey(
@@ -308,6 +440,9 @@ class AccessGroupEntry(TimestampedModel):
         DID,
         on_delete=models.CASCADE,
         related_name="access_group_entries",
+        null=True,
+        blank=True,
+        help_text="The single DID this rule grants. Mutually exclusive with department.",
     )
     department = models.ForeignKey(
         Department,
@@ -315,7 +450,18 @@ class AccessGroupEntry(TimestampedModel):
         related_name="access_group_entries",
         null=True,
         blank=True,
-        help_text="Leave blank to grant all departments on this DID.",
+        help_text=(
+            "The department this rule grants (all DIDs under it, including "
+            "ones added later). Mutually exclusive with did."
+        ),
+    )
+    division = models.ForeignKey(
+        Division,
+        on_delete=models.CASCADE,
+        related_name="access_group_entries",
+        null=True,
+        blank=True,
+        help_text="Leave blank to grant all divisions on the DID(s) named above.",
     )
 
     class Meta:
@@ -324,18 +470,24 @@ class AccessGroupEntry(TimestampedModel):
         verbose_name_plural = "Access Group Entries"
         constraints = [
             models.UniqueConstraint(
-                fields=["group", "did", "department"],
+                fields=["group", "did", "division"],
                 name="uq_access_group_entry",
+            ),
+            models.UniqueConstraint(
+                fields=["group", "department", "division"],
+                name="uq_access_group_entry_department",
             ),
         ]
         indexes = [
             models.Index(fields=["group"], name="idx_agentry_group"),
             models.Index(fields=["did"], name="idx_agentry_did"),
+            models.Index(fields=["department"], name="idx_agentry_department"),
         ]
 
     def __str__(self) -> str:
-        dept = self.department.name if self.department_id else "All Departments"
-        return f"{self.group.name}: {self.did.number} / {dept}"
+        division = self.division.name if self.division_id else "All Divisions"
+        scope = self.did.number if self.did_id else f"Department: {self.department.name}"
+        return f"{self.group.name}: {scope} / {division}"
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +500,7 @@ class TLGroupAccess(TimestampedModel):
     into everything defined by an AccessGroup.
 
     This is strictly a reporting grant — it never implies work assignment,
-    and is unrelated to UserDID / UserDIDDepartmentAssignment.
+    and is unrelated to UserDID / UserDIDDivisionAssignment.
     """
 
     user = models.ForeignKey(

@@ -140,8 +140,8 @@ class UserListCreateView(generics.ListCreateAPIView):
             User.objects.select_related("tenant", "extension")
             .prefetch_related(
                 "user_dids__did",
-                "did_department_assignments__department",
-                "tl_group_access__group__entries__department",
+                "did_division_assignments__division",
+                "tl_group_access__group__entries__division",
             )
             .all()
         )
@@ -164,41 +164,41 @@ class UserListCreateView(generics.ListCreateAPIView):
             elif is_team_lead.lower() in ("false", "0"):
                 qs = qs.filter(is_team_lead=False)
 
-        # Department filter (multi-select): ?department_id=1,2,3
-        # Matches both regular callers assigned to work that department
-        # (UserDIDDepartmentAssignment) and Team Leads whose AccessGroup
-        # grant covers it. A null-department entry grants "all departments
-        # on that DID" (see AccessGroupEntry.department docstring), which we
-        # can't resolve to specific department ids without knowing which
-        # departments are actually worked on that DID — so, consistent with
-        # resolve_tl_department_ids treating a null entry as unrestricted,
-        # any TL holding such a grant matches every department filter.
+        # Division filter (multi-select): ?division_id=1,2,3
+        # Matches both regular callers assigned to work that division
+        # (UserDIDDivisionAssignment) and Team Leads whose AccessGroup grant
+        # covers it. A null-division entry grants "all divisions on that
+        # DID" (see AccessGroupEntry.division docstring), which we can't
+        # resolve to specific division ids without knowing which divisions
+        # are actually worked on that DID — so, consistent with
+        # resolve_tl_division_ids treating a null entry as unrestricted,
+        # any TL holding such a grant matches every division filter.
         #
-        # NOTE: `Q(tl_group_access__group__entries__department_id__isnull=True)`
+        # NOTE: `Q(tl_group_access__group__entries__division_id__isnull=True)`
         # on its own is a trap — for a user with NO tl_group_access rows at
         # all, the reverse-FK LEFT OUTER JOIN still produces a NULL
-        # department_id, so that Q would match every non-TL user too, not
-        # just TLs holding a genuine "all departments" entry. Restricting to
+        # division_id, so that Q would match every non-TL user too, not
+        # just TLs holding a genuine "all divisions" entry. Restricting to
         # AccessGroupEntry rows that actually exist (via a subquery of
         # user ids) avoids matching users with no grants whatsoever.
-        department_id = self.request.query_params.get("department_id")
-        if department_id:
-            department_ids = [d.strip() for d in department_id.split(",") if d.strip()]
-            if department_ids:
+        division_id = self.request.query_params.get("division_id")
+        if division_id:
+            division_ids = [t.strip() for t in division_id.split(",") if t.strip()]
+            if division_ids:
                 unrestricted_tl_ids = TLGroupAccess.objects.filter(
                     group__entries__id__isnull=False,
-                    group__entries__department_id__isnull=True,
+                    group__entries__division_id__isnull=True,
                 ).values_list("user_id", flat=True)
                 qs = qs.filter(
-                    Q(did_department_assignments__department_id__in=department_ids)
-                    | Q(tl_group_access__group__entries__department_id__in=department_ids)
+                    Q(did_division_assignments__division_id__in=division_ids)
+                    | Q(tl_group_access__group__entries__division_id__in=division_ids)
                     | Q(id__in=unrestricted_tl_ids)
                 ).distinct()
 
         # DID filter (multi-select): ?did_id=1,2,3
         # Matches regular callers with that DID assigned (UserDID) and Team
         # Leads whose AccessGroup grant covers it, mirroring the
-        # department_id filter above.
+        # division_id filter above.
         did_id = self.request.query_params.get("did_id")
         if did_id:
             did_ids = [d.strip() for d in did_id.split(",") if d.strip()]
@@ -227,10 +227,10 @@ class UserListCreateView(generics.ListCreateAPIView):
             else:
                 qs = qs.none()
 
-        # Team Leads see only the users assigned to their granted DID/
-        # Department combinations (TLGroupAccess), same restriction already
-        # applied to CDR logs, extensions, and DIDs. Superadmins and admins
-        # without TL grants are unrestricted.
+        # Team Leads see only the users assigned to their granted DID/Division
+        # combinations (TLGroupAccess), same restriction already applied to
+        # CDR logs, extensions, and DIDs. Superadmins and admins without TL
+        # grants are unrestricted.
         if not (user.is_superuser or user.role == "superadmin"):
             tl_extensions = resolve_tl_extensions(user)
             if tl_extensions is not None:

@@ -4,8 +4,12 @@ from apps.dids.views import (
     DIDListView,
     DepartmentListCreateView,
     DepartmentDetailView,
-    UserDIDDepartmentAssignmentListCreateView,
-    UserDIDDepartmentAssignmentDetailView,
+    AccountListCreateView,
+    AccountDetailView,
+    DivisionListCreateView,
+    DivisionDetailView,
+    UserDIDDivisionAssignmentListCreateView,
+    UserDIDDivisionAssignmentDetailView,
     AccessGroupListCreateView,
     AccessGroupDetailView,
     AccessGroupEntryListCreateView,
@@ -22,15 +26,21 @@ urlpatterns = [
     path("departments/", DepartmentListCreateView.as_view(), name="department-list"),
     path("departments/<uuid:id>/", DepartmentDetailView.as_view(), name="department-detail"),
 
+    path("accounts/", AccountListCreateView.as_view(), name="account-list"),
+    path("accounts/<uuid:id>/", AccountDetailView.as_view(), name="account-detail"),
+
+    path("divisions/", DivisionListCreateView.as_view(), name="division-list"),
+    path("divisions/<uuid:id>/", DivisionDetailView.as_view(), name="division-detail"),
+
     path(
-        "department-assignments/",
-        UserDIDDepartmentAssignmentListCreateView.as_view(),
-        name="user-did-department-assignment-list",
+        "division-assignments/",
+        UserDIDDivisionAssignmentListCreateView.as_view(),
+        name="user-did-division-assignment-list",
     ),
     path(
-        "department-assignments/<uuid:id>/",
-        UserDIDDepartmentAssignmentDetailView.as_view(),
-        name="user-did-department-assignment-detail",
+        "division-assignments/<uuid:id>/",
+        UserDIDDivisionAssignmentDetailView.as_view(),
+        name="user-did-division-assignment-detail",
     ),
 
     path("access-groups/", AccessGroupListCreateView.as_view(), name="access-group-list"),
