@@ -118,20 +118,19 @@ def send_welcome_email(
 
 
 @shared_task(name="apps.users.tasks.send_password_reset_email")
-def send_password_reset_email(email: str, reset_url: str, first_name: str = ""):
+def send_password_reset_email(email: str, temp_password: str, first_name: str = ""):
     greeting = f"Hi {first_name}," if first_name else "Hi,"
-    subject = "TCX Connect — Reset your password"
+    subject = "TCX Connect — Your temporary password"
     text_body = (
         f"{greeting}\n\n"
         f"We received a request to reset your password.\n\n"
-        f"Click the link below to reset it (valid for {RESET_TOKEN_EXPIRY_MINUTES} minutes):\n"
-        f"{reset_url}\n\n"
-        f"If you did not request a password reset, you can safely ignore this email."
+        f"Your temporary password is: {temp_password}\n\n"
+        f"You must change it on first login. If you did not request this, "
+        f"you can safely ignore this email."
     )
     context = {
         "greeting": greeting,
-        "reset_url": reset_url,
-        "expiry_minutes": RESET_TOKEN_EXPIRY_MINUTES,
+        "temp_password": temp_password,
     }
     html_body = render_to_string("users/email/password_reset_email.html", context)
 

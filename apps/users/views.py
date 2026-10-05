@@ -19,6 +19,7 @@ from apps.common.tl_scoping import resolve_tl_extensions
 from apps.dids.models import DID, UserDID, TLGroupAccess
 from apps.extensions.models import Extension
 import secrets
+import string
 from django.utils import timezone
 
 from apps.users.models import User, PasswordResetToken
@@ -601,8 +602,8 @@ _RESET_TOKEN_EXPIRY_MINUTES = 30
 class ForgotPasswordView(APIView):
     """
     POST /api/v1/auth/forgot-password/
-    Accepts an email address and sends a password-reset link if the account exists.
-    Always returns 200 to avoid leaking whether an email is registered.
+    Accepts an email address, generates a temporary password, and emails it
+    to the user. Returns an error if the email is not registered.
     """
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -614,22 +615,26 @@ class ForgotPasswordView(APIView):
         email = serializer.validated_data["email"].strip().lower()
         user = User.objects.filter(email=email, is_active=True).first()
 
-        if user:
-            # Invalidate any previous unused tokens for this user
-            PasswordResetToken.objects.filter(user=user, used_at__isnull=True).delete()
-
-            raw_token = secrets.token_urlsafe(32)
-            PasswordResetToken.objects.create(user=user, token=raw_token)
-
-            reset_url = f"{request.data.get('reset_base_url', '').rstrip('/')}?token={raw_token}"
-            send_password_reset_email.delay(
-                email=user.email,
-                reset_url=reset_url,
-                first_name=user.first_name,
+        if not user:
+            return Response(
+                {"detail": "This email is not registered on our platform."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
+        alphabet = string.ascii_letters + string.digits + "!@#$%"
+        temp_password = "".join(secrets.choice(alphabet) for _ in range(12))
+        user.set_password(temp_password)
+        user.must_change_password = True
+        user.save(update_fields=["password", "must_change_password"])
+
+        send_password_reset_email.delay(
+            email=user.email,
+            temp_password=temp_password,
+            first_name=user.first_name,
+        )
+
         return Response(
-            {"detail": "If an account with that email exists, a password reset link has been sent."},
+            {"detail": f"Temporary password sent to {user.email}. Please check your email to continue."},
             status=status.HTTP_200_OK,
         )
 
