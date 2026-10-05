@@ -63,15 +63,15 @@ class CallRecordingListView(APIView):
         params = dict(request.query_params)
         params = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in params.items()}
 
-        # If no extension param supplied and the requesting user has an assigned
-        # extension, default to their own extension so they only see their own
-        # recordings unless they explicitly ask for another.
-        if not params.get("extension"):
+        # For logs-type requests, pass params as-is — no extension injection.
+        # For other types, if no extension was supplied, default to the
+        # requesting user's own extension.
+        if params.get("type") != "logs" and not params.get("ext"):
             user_ext = getattr(request.user, "extension", None)
             if user_ext and user_ext.extension_number:
-                params["extension"] = user_ext.extension_number
+                params["ext"] = user_ext.extension_number
 
-        raw_extension = params.get("extension", "")
+        raw_extension = params.get("ext", "")
         extensions = [e.strip() for e in raw_extension.split(",") if e.strip()]
 
         if len(extensions) <= 1:
@@ -89,7 +89,7 @@ class CallRecordingListView(APIView):
             return Response({"detail": "page and page_size must be integers."}, status=status.HTTP_400_BAD_REQUEST)
 
         def _fetch(ext):
-            call_params = {**params, "extension": ext, "page": 1, "page_size": MULTI_EXTENSION_FETCH_LIMIT}
+            call_params = {**params, "ext": ext, "page": 1, "page_size": MULTI_EXTENSION_FETCH_LIMIT}
             resp = FreeSwitchClientService.proxy_request(
                 tenant=tenant, method="GET", endpoint_path="call-recordings/", params=call_params,
             )
