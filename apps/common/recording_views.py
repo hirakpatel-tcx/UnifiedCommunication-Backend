@@ -63,6 +63,14 @@ class CallRecordingListView(APIView):
         params = dict(request.query_params)
         params = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in params.items()}
 
+        # If no extension param supplied and the requesting user has an assigned
+        # extension, default to their own extension so they only see their own
+        # recordings unless they explicitly ask for another.
+        if not params.get("extension"):
+            user_ext = getattr(request.user, "extension", None)
+            if user_ext and user_ext.extension_number:
+                params["extension"] = user_ext.extension_number
+
         raw_extension = params.get("extension", "")
         extensions = [e.strip() for e in raw_extension.split(",") if e.strip()]
 

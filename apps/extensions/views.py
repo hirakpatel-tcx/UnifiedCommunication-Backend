@@ -10,6 +10,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import BasePermission
 from django.shortcuts import get_object_or_404
 
+import concurrent.futures
+
 from django.db.models import Prefetch
 
 from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
@@ -180,27 +182,64 @@ def _enrich_rows_with_user(rows, tenant, key, lookup_field):
         row["user"] = UserDetailSerializer(user).data if user else None
 
 
+def _build_busy_extension_numbers(tenant) -> set:
+    """
+    Returns the set of extension_numbers that are currently on an active call,
+    by fetching live calls from FreeSWITCH and resolving sip_username → extension_number
+    via the local Extension table.
+    Returns an empty set if the calls request fails.
+    """
+    try:
+        calls_response = FreeSwitchClientService.proxy_request(
+            tenant=tenant,
+            method="GET",
+            endpoint_path="calls/",
+        )
+        calls = _extract_list(calls_response.data, "calls") or []
+    except Exception:
+        return set()
+
+    sip_usernames = {row.get("extension") for row in calls if row.get("extension")}
+    if not sip_usernames:
+        return set()
+
+    return set(
+        Extension.objects.filter(
+            tenant=tenant,
+            sip_username__in=sip_usernames,
+        ).values_list("extension_number", flat=True)
+    )
+
+
 class ExtensionRegistrationsView(APIView):
     """
     GET /api/v1/extensions/registrations/
     Online/offline status for every enabled extension in the tenant, with
     extension number and name, proxied from FreeSWITCH via ESL. Each row is
     enriched with the UnifiedCommunication user assigned to that extension,
-    if any.
+    if any. Extensions that are online and currently on an active call are
+    reported with status "online_busy".
     """
     permission_classes = [IsAdminOrSuperAdmin]
 
     def get(self, request, *args, **kwargs):
         tenant = FreeSwitchClientService.get_target_tenant(request)
-        response = FreeSwitchClientService.proxy_request(
-            tenant=tenant,
-            method="GET",
-            endpoint_path="registrations/",
-        )
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            f_reg = pool.submit(
+                FreeSwitchClientService.proxy_request,
+                tenant=tenant, method="GET", endpoint_path="registrations/",
+            )
+            f_busy = pool.submit(_build_busy_extension_numbers, tenant)
+            response = f_reg.result()
+            busy_extension_numbers = f_busy.result()
 
         registrations = _extract_list(response.data, "registrations")
         if response.status_code == status.HTTP_200_OK and registrations is not None:
             _enrich_rows_with_user(registrations, tenant, key="extension", lookup_field="extension_number")
+            for row in registrations:
+                if row.get("status") == "online" and row.get("extension") in busy_extension_numbers:
+                    row["status"] = "online_busy"
 
         return response
 
