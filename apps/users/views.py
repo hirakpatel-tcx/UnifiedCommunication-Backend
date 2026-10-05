@@ -5,7 +5,7 @@ Authentication, user management, and telephony resource assignment views.
 """
 
 from django.contrib.auth.models import Permission, update_last_login
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -16,7 +16,7 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
 from apps.common.services.secret_service import SecretService
 from apps.common.tl_scoping import resolve_tl_extensions
-from apps.dids.models import DID, UserDID, TLGroupAccess
+from apps.dids.models import DID, AccessGroup, AccessGroupEntry, UserDID, TLGroupAccess
 from apps.extensions.models import Extension
 import secrets
 import string
@@ -147,7 +147,12 @@ class UserListCreateView(generics.ListCreateAPIView):
             .prefetch_related(
                 "user_dids__did",
                 "did_division_assignments__division",
-                "tl_group_access__group__entries__division",
+                Prefetch(
+                    "tl_group_access__group__entries",
+                    queryset=AccessGroupEntry.objects.select_related("division"),
+                    to_attr="_entries_cache",
+                ),
+                "tl_group_access__group",
             )
             .all()
         )

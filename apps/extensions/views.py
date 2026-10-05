@@ -10,10 +10,13 @@ from rest_framework.response import Response
 from rest_framework.permissions import BasePermission
 from django.shortcuts import get_object_or_404
 
+from django.db.models import Prefetch
+
 from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
 from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.tenant_resolver import get_scoped_tenant
 from apps.common.tl_scoping import resolve_tl_extensions
+from apps.dids.models import AccessGroupEntry
 from apps.extensions.models import Extension
 from apps.extensions.serializers import ExtensionSerializer, ExtensionTransportUpdateSerializer
 from apps.users.serializers import UserDetailSerializer
@@ -163,7 +166,12 @@ def _enrich_rows_with_user(rows, tenant, key, lookup_field):
         ).select_related("user__tenant", "user__extension").prefetch_related(
             "user__user_dids__did",
             "user__did_division_assignments__division",
-            "user__tl_group_access__group__entries__division",
+            Prefetch(
+                "user__tl_group_access__group__entries",
+                queryset=AccessGroupEntry.objects.select_related("division"),
+                to_attr="_entries_cache",
+            ),
+            "user__tl_group_access__group",
         )
     }
     for row in rows:

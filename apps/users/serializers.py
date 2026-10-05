@@ -149,7 +149,10 @@ class UserDetailSerializer(serializers.ModelSerializer):
             for a in obj.did_division_assignments.all()
         }
         for grant in obj.tl_group_access.all():
-            for entry in grant.group.entries.all():
+            entries = getattr(grant.group, "_entries_cache", None)
+            if entries is None:
+                entries = grant.group.entries.select_related("division").all()
+            for entry in entries:
                 if entry.division_id:
                     divisions[entry.division_id] = entry.division.name
         return [
