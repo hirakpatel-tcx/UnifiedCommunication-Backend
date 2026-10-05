@@ -9,6 +9,7 @@ these endpoints are superadmin-only.
 """
 
 import calendar
+import concurrent.futures
 from datetime import datetime, timezone
 
 import httpx
@@ -83,21 +84,27 @@ class TelnyxMonthlyBillingView(APIView):
             start_date, end_date = _current_month_range()
 
         try:
-            voice_usage = TelnyxClientService.get_usage_report(
-                product=TELNYX_VOICE_PRODUCT,
-                start_date=start_date,
-                end_date=end_date,
-                metrics=["cost", "completed", "billed_sec"],
-                dimensions=["direction"],
-            )
-            messaging_usage = TelnyxClientService.get_usage_report(
-                product=TELNYX_MESSAGING_PRODUCT,
-                start_date=start_date,
-                end_date=end_date,
-                metrics=["cost"],
-                dimensions=["date"],
-            )
-            balance = TelnyxClientService.get_balance()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                f_voice = pool.submit(
+                    TelnyxClientService.get_usage_report,
+                    product=TELNYX_VOICE_PRODUCT,
+                    start_date=start_date,
+                    end_date=end_date,
+                    metrics=["cost", "completed", "billed_sec"],
+                    dimensions=["direction"],
+                )
+                f_messaging = pool.submit(
+                    TelnyxClientService.get_usage_report,
+                    product=TELNYX_MESSAGING_PRODUCT,
+                    start_date=start_date,
+                    end_date=end_date,
+                    metrics=["cost"],
+                    dimensions=["date"],
+                )
+                f_balance = pool.submit(TelnyxClientService.get_balance)
+                voice_usage = f_voice.result()
+                messaging_usage = f_messaging.result()
+                balance = f_balance.result()
         except Exception as err:
             return _telnyx_error_response(err)
 

@@ -146,9 +146,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         """
         divisions = {
             a.division_id: a.division.name
-            for a in obj.did_division_assignments.select_related("division").all()
+            for a in obj.did_division_assignments.all()
         }
-        for grant in obj.tl_group_access.select_related("group").prefetch_related("group__entries__division").all():
+        for grant in obj.tl_group_access.all():
             for entry in grant.group.entries.all():
                 if entry.division_id:
                     divisions[entry.division_id] = entry.division.name
