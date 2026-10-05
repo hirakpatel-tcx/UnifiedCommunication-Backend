@@ -23,6 +23,33 @@ from apps.common.services.freeswitch_client import FreeSwitchClientService
 # history every request.
 MULTI_EXTENSION_FETCH_LIMIT = 200
 
+_LOGS_BLOCKED_NUMBERS = {"9142215776", "9295679099"}
+
+
+def _is_logs_row_excluded(row: dict) -> bool:
+    """Returns True if the row should be removed from a type=logs listing."""
+    if row.get("caller_id_number") in _LOGS_BLOCKED_NUMBERS:
+        return True
+    if row.get("destination_number") in _LOGS_BLOCKED_NUMBERS:
+        return True
+    ext = str(row.get("extension") or "").strip()
+    if ext.isdigit() and 100 <= int(ext) <= 199:
+        return True
+    return False
+
+
+def _filter_logs_results(data: dict) -> dict:
+    """Removes excluded rows from a paginated results envelope in-place."""
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        return data
+    original = data["results"]
+    filtered = [r for r in original if not _is_logs_row_excluded(r)]
+    removed = len(original) - len(filtered)
+    data["results"] = filtered
+    if removed and isinstance(data.get("count"), int):
+        data["count"] = max(0, data["count"] - removed)
+    return data
+
 
 def _validate_calling_feature(tenant):
     if not (tenant.features or {}).get("calling", False):
@@ -74,13 +101,18 @@ class CallRecordingListView(APIView):
         raw_extension = params.get("ext", "")
         extensions = [e.strip() for e in raw_extension.split(",") if e.strip()]
 
+        is_logs = params.get("type") == "logs"
+
         if len(extensions) <= 1:
-            return FreeSwitchClientService.proxy_request(
+            response = FreeSwitchClientService.proxy_request(
                 tenant=tenant,
                 method="GET",
                 endpoint_path="call-recordings/",
                 params=params,
             )
+            if is_logs and response.status_code == status.HTTP_200_OK:
+                response.data = _filter_logs_results(response.data)
+            return response
 
         try:
             page = int(params.get("page", 1))
@@ -99,6 +131,8 @@ class CallRecordingListView(APIView):
             batches = list(executor.map(_fetch, extensions))
 
         merged = [row for batch in batches for row in batch]
+        if is_logs:
+            merged = [r for r in merged if not _is_logs_row_excluded(r)]
         merged.sort(key=lambda r: r.get("start_stamp") or "", reverse=True)
 
         total = len(merged)
