@@ -213,19 +213,22 @@ class Command(BaseCommand):
         division_dental = None if dry_run else Division.objects.get(name="Dental")
         created_users = []
 
-        existing_ext_numbers = set(
-            Extension.objects.filter(tenant=tenant).values_list("extension_number", flat=True)
+        # Only numbers already assigned to a user block the counter — an
+        # existing-but-unassigned extension (e.g. synced from FreeSWITCH)
+        # is reused rather than skipped.
+        taken_ext_numbers = set(
+            Extension.objects.filter(tenant=tenant, user__isnull=False).values_list("extension_number", flat=True)
         )
 
         for first, last, email, account_name, department_name, is_team_lead in USERS:
             user = User.objects.filter(email=email).first()
 
             if user is None:
-                while str(next_ext) in existing_ext_numbers:
+                while str(next_ext) in taken_ext_numbers:
                     next_ext += 1
                 ext_number = str(next_ext)
                 next_ext += 1
-                existing_ext_numbers.add(ext_number)
+                taken_ext_numbers.add(ext_number)
 
                 if dry_run:
                     did_label = f"{account_name}/{department_name}" if account_name else "(none)"
@@ -246,16 +249,27 @@ class Command(BaseCommand):
                 )
                 del raw_password  # never logged, never persisted
 
-                Extension.objects.create(
-                    tenant=tenant,
-                    freeswitch_object_id=str(uuid.uuid4()),
-                    extension_number=ext_number,
-                    sip_username=f"{ext_number}-{tenant.tenant_code}",
-                    encrypted_sip_password=SecretService.encrypt(generate_temp_password()),
-                    user=user,
-                )
+                # Prefer attaching to an existing unassigned extension already
+                # synced from FreeSWITCH (e.g. via the extension.updated
+                # webhook resync) over creating a brand-new one.
+                existing_ext = Extension.objects.filter(
+                    tenant=tenant, extension_number=ext_number, user__isnull=True
+                ).first()
+                if existing_ext:
+                    existing_ext.user = user
+                    existing_ext.save(update_fields=["user"])
+                    self.stdout.write(self.style.SUCCESS(f"  created {email}, assigned existing ext={ext_number}"))
+                else:
+                    Extension.objects.create(
+                        tenant=tenant,
+                        freeswitch_object_id=str(uuid.uuid4()),
+                        extension_number=ext_number,
+                        sip_username=f"{ext_number}-{tenant.tenant_code}",
+                        encrypted_sip_password=SecretService.encrypt(generate_temp_password()),
+                        user=user,
+                    )
+                    self.stdout.write(self.style.SUCCESS(f"  created {email} ext={ext_number}"))
                 created_users.append(email)
-                self.stdout.write(self.style.SUCCESS(f"  created {email} ext={ext_number}"))
             else:
                 if dry_run:
                     self.stdout.write(f"  exists {email} (would still check DID access/assignment)")

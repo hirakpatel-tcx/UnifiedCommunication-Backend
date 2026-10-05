@@ -31,3 +31,20 @@ class IsAdminOrSuperAdmin(BasePermission):
         if not (user and user.is_authenticated):
             return False
         return bool(user.is_superuser or getattr(user, "role", "") in ("superadmin", "admin"))
+
+
+class IsSupervisorOrAdmin(BasePermission):
+    """
+    Allows access to platform superadmins, tenant administrators, and team
+    leads. Intended for call-monitoring actions (listen/whisper/barge) that
+    should not be exposed to regular agents.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        return bool(
+            user.is_superuser
+            or getattr(user, "role", "") in ("superadmin", "admin")
+            or getattr(user, "is_team_lead", False)
+        )

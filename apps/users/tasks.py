@@ -83,6 +83,8 @@ def send_welcome_email(
     )
     html_body = render_to_string("users/email/welcome_email.html", context)
 
+    from apps.users.models import EmailLog, EmailLogStatus
+
     try:
         message = EmailMultiAlternatives(
             subject=subject,
@@ -94,4 +96,20 @@ def send_welcome_email(
         message.send(fail_silently=False)
     except Exception as exc:
         logger.error("Failed to send welcome email to %s: %s", email, exc, exc_info=True)
+        EmailLog.objects.create(
+            to_email=email,
+            subject=subject,
+            template="welcome_email",
+            user_id=user_id,
+            status=EmailLogStatus.FAILED,
+            error=str(exc),
+        )
         raise
+    else:
+        EmailLog.objects.create(
+            to_email=email,
+            subject=subject,
+            template="welcome_email",
+            user_id=user_id,
+            status=EmailLogStatus.SENT,
+        )

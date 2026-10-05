@@ -16,6 +16,7 @@ from apps.users.views import (
     UserInviteCreateView,
     UserListCreateView,
     UserPermissionsView,
+    UserReinviteView,
     UserVoicemailBoxView,
 )
 
@@ -32,6 +33,7 @@ auth_urlpatterns = [
 user_urlpatterns = [
     path("", UserListCreateView.as_view(), name="user-list-create"),
     path("invite/", UserInviteCreateView.as_view(), name="user-invite-create"),
+    path("<uuid:id>/reinvite/", UserReinviteView.as_view(), name="user-reinvite"),
     path("permissions/", PermissionListView.as_view(), name="permission-list"),
     path("<uuid:id>/", UserDetailView.as_view(), name="user-detail"),
     path("<uuid:id>/permissions/", UserPermissionsView.as_view(), name="user-permissions"),

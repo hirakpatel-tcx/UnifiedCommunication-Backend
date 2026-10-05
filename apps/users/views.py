@@ -615,3 +615,50 @@ class UserVoicemailBoxView(APIView):
         target_user.voicemail_boxes = [b for b in target_user.voicemail_boxes if str(b) != str(box_id)]
         target_user.save(update_fields=["voicemail_boxes", "updated_at"])
         return Response({"status": "removed", "voicemail_boxes": target_user.voicemail_boxes}, status=status.HTTP_200_OK)
+
+
+class UserReinviteView(APIView):
+    """
+    POST /api/v1/users/{id}/reinvite/
+    Resends the welcome/invite email to a user who hasn't logged in yet,
+    with a freshly generated temp password (same behavior as the
+    send_pending_invites management command — the original temp password
+    is never stored anywhere, so a resend always issues a new one and
+    invalidates the previous, unused one).
+
+    Only valid for users still pending first login; an already-onboarded
+    user must use the normal password-reset flow instead.
+    """
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def post(self, request, id, *args, **kwargs):
+        target_user = get_object_or_404(User, id=id)
+
+        if not target_user.is_first_login:
+            return Response(
+                {"detail": "User has already logged in; use password reset instead of reinvite."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not target_user.is_active:
+            return Response(
+                {"detail": "Cannot reinvite an inactive user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps.users.utils import generate_temp_password
+
+        raw_password = generate_temp_password()
+        target_user.set_password(raw_password)
+        target_user.must_change_password = True
+        target_user.save(update_fields=["password", "must_change_password", "updated_at"])
+
+        send_welcome_email.delay(
+            email=target_user.email,
+            plaintext_password=raw_password,
+            is_temp_password=True,
+            first_name=target_user.first_name,
+            user_id=target_user.id,
+        )
+        del raw_password
+
+        return Response({"status": "reinvited", "email": target_user.email}, status=status.HTTP_200_OK)

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from apps.users.models import User
+from apps.users.models import EmailLog, User
 from apps.extensions.models import Extension
 from apps.dids.models import UserDID, UserDIDDivisionAssignment
 
@@ -27,10 +27,25 @@ class UserDIDDivisionAssignmentInline(admin.TabularInline):
     autocomplete_fields = ("did", "division")
 
 
+class EverLoggedInFilter(admin.SimpleListFilter):
+    title = "logged in"
+    parameter_name = "logged_in"
+
+    def lookups(self, request, model_admin):
+        return (("yes", "Yes"), ("no", "No (never logged in)"))
+
+    def queryset(self, request, queryset):
+        if self.value() == "yes":
+            return queryset.filter(last_login__isnull=False)
+        if self.value() == "no":
+            return queryset.filter(last_login__isnull=True)
+        return queryset
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "created_at")
-    list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant")
+    list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "has_logged_in", "created_at")
+    list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant", EverLoggedInFilter)
     inlines = [ExtensionInline, UserDIDInline, UserDIDDivisionAssignmentInline]
     fieldsets = (
         (None, {"fields": ("email", "password")}),
@@ -57,3 +72,21 @@ class UserAdmin(BaseUserAdmin):
         if hasattr(obj, "extension") and obj.extension:
             return obj.extension.extension_number
         return "-"
+
+    @admin.display(description="Logged In?", boolean=True)
+    def has_logged_in(self, obj):
+        return obj.last_login is not None
+
+
+@admin.register(EmailLog)
+class EmailLogAdmin(admin.ModelAdmin):
+    list_display = ("to_email", "subject", "template", "status", "created_at")
+    list_filter = ("status", "template")
+    search_fields = ("to_email", "subject")
+    readonly_fields = [f.name for f in EmailLog._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

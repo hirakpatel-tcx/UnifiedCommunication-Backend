@@ -30,6 +30,8 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
+from apps.common.models import UUIDModel
+
 from .managers import UserManager
 from .validators import validate_fax_boxes, validate_voicemail_boxes
 
@@ -297,3 +299,71 @@ class User(AbstractBaseUser, PermissionsMixin):
     def has_voicemail_box(self, box_id: int) -> bool:
         """Return True if the given voicemail_box_id is assigned to this user."""
         return box_id in self.voicemail_boxes
+
+
+# ---------------------------------------------------------------------------
+# EmailLog
+# ---------------------------------------------------------------------------
+
+class EmailLogStatus(models.TextChoices):
+    SENT = "sent", "Sent"
+    FAILED = "failed", "Failed"
+
+
+class EmailLog(UUIDModel):
+    """
+    Permanent record of every application email send attempt (e.g. welcome/
+    invite emails sent via apps.users.tasks.send_welcome_email).
+
+    This is NOT WebhookLog: WebhookLog records inbound FreeSWITCH events and
+    expires after 48h; EmailLog records outbound application emails and is
+    kept permanently as a send audit trail. It stores only metadata about
+    the send (recipient, subject, status, error) — never the email body or
+    any password/secret that may have been included in the message.
+    """
+
+    to_email = models.EmailField(
+        db_index=True,
+        help_text="Recipient address the email was sent to.",
+    )
+    subject = models.CharField(
+        max_length=255,
+        help_text="Subject line of the sent email.",
+    )
+    template = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Name of the email task/template that generated this send (e.g. 'welcome_email').",
+    )
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="email_logs",
+        help_text="The user this email concerns, if applicable.",
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=EmailLogStatus.choices,
+        db_index=True,
+        help_text="Whether the send succeeded or failed.",
+    )
+    error = models.TextField(
+        blank=True,
+        help_text="Error message if the send failed. Empty on success.",
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text="UTC timestamp when this send was attempted.",
+    )
+
+    class Meta:
+        db_table = "email_logs"
+        verbose_name = "Email Log"
+        verbose_name_plural = "Email Logs"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.subject} → {self.to_email} [{self.status}] @ {self.created_at}"
