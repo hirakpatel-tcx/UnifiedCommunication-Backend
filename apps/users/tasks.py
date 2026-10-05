@@ -18,6 +18,8 @@ from django.urls import reverse
 
 logger = logging.getLogger(__name__)
 
+RESET_TOKEN_EXPIRY_MINUTES = 30
+
 
 def _build_desktop_download_url(user_id, os_name="win") -> str:
     """
@@ -111,5 +113,53 @@ def send_welcome_email(
             subject=subject,
             template="welcome_email",
             user_id=user_id,
+            status=EmailLogStatus.SENT,
+        )
+
+
+@shared_task(name="apps.users.tasks.send_password_reset_email")
+def send_password_reset_email(email: str, reset_url: str, first_name: str = ""):
+    greeting = f"Hi {first_name}," if first_name else "Hi,"
+    subject = "TCX Connect — Reset your password"
+    text_body = (
+        f"{greeting}\n\n"
+        f"We received a request to reset your password.\n\n"
+        f"Click the link below to reset it (valid for {RESET_TOKEN_EXPIRY_MINUTES} minutes):\n"
+        f"{reset_url}\n\n"
+        f"If you did not request a password reset, you can safely ignore this email."
+    )
+    context = {
+        "greeting": greeting,
+        "reset_url": reset_url,
+        "expiry_minutes": RESET_TOKEN_EXPIRY_MINUTES,
+    }
+    html_body = render_to_string("users/email/password_reset_email.html", context)
+
+    from apps.users.models import EmailLog, EmailLogStatus
+
+    try:
+        message = EmailMultiAlternatives(
+            subject=subject,
+            body=text_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[email],
+        )
+        message.attach_alternative(html_body, "text/html")
+        message.send(fail_silently=False)
+    except Exception as exc:
+        logger.error("Failed to send password reset email to %s: %s", email, exc, exc_info=True)
+        EmailLog.objects.create(
+            to_email=email,
+            subject=subject,
+            template="password_reset_email",
+            status=EmailLogStatus.FAILED,
+            error=str(exc),
+        )
+        raise
+    else:
+        EmailLog.objects.create(
+            to_email=email,
+            subject=subject,
+            template="password_reset_email",
             status=EmailLogStatus.SENT,
         )

@@ -18,10 +18,15 @@ from apps.common.services.secret_service import SecretService
 from apps.common.tl_scoping import resolve_tl_extensions
 from apps.dids.models import DID, UserDID, TLGroupAccess
 from apps.extensions.models import Extension
-from apps.users.models import User
-from apps.users.tasks import send_welcome_email
+import secrets
+from django.utils import timezone
+
+from apps.users.models import User, PasswordResetToken
+from apps.users.tasks import send_welcome_email, send_password_reset_email
 from apps.users.serializers import (
     ChangePasswordSerializer,
+    ForgotPasswordSerializer,
+    ResetPasswordSerializer,
     DIDAssignSerializer,
     ExtensionAssignSerializer,
     FaxBoxAssignSerializer,
@@ -588,6 +593,84 @@ class UserFaxBoxView(APIView):
         target_user.fax_boxes = [b for b in target_user.fax_boxes if b.get("fax_uuid") != str(fax_uuid)]
         target_user.save(update_fields=["fax_boxes", "updated_at"])
         return Response({"status": "removed", "fax_boxes": target_user.fax_boxes}, status=status.HTTP_200_OK)
+
+
+_RESET_TOKEN_EXPIRY_MINUTES = 30
+
+
+class ForgotPasswordView(APIView):
+    """
+    POST /api/v1/auth/forgot-password/
+    Accepts an email address and sends a password-reset link if the account exists.
+    Always returns 200 to avoid leaking whether an email is registered.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request, *args, **kwargs):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"].strip().lower()
+        user = User.objects.filter(email=email, is_active=True).first()
+
+        if user:
+            # Invalidate any previous unused tokens for this user
+            PasswordResetToken.objects.filter(user=user, used_at__isnull=True).delete()
+
+            raw_token = secrets.token_urlsafe(32)
+            PasswordResetToken.objects.create(user=user, token=raw_token)
+
+            reset_url = f"{request.data.get('reset_base_url', '').rstrip('/')}?token={raw_token}"
+            send_password_reset_email.delay(
+                email=user.email,
+                reset_url=reset_url,
+                first_name=user.first_name,
+            )
+
+        return Response(
+            {"detail": "If an account with that email exists, a password reset link has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ResetPasswordView(APIView):
+    """
+    POST /api/v1/auth/reset-password/
+    Validates the token and sets the new password.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request, *args, **kwargs):
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        raw_token = serializer.validated_data["token"]
+        new_password = serializer.validated_data["new_password"]
+
+        try:
+            reset_token = PasswordResetToken.objects.select_related("user").get(
+                token=raw_token,
+                used_at__isnull=True,
+            )
+        except PasswordResetToken.DoesNotExist:
+            return Response({"detail": "Invalid or expired reset token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        expiry = reset_token.created_at + timezone.timedelta(minutes=_RESET_TOKEN_EXPIRY_MINUTES)
+        if timezone.now() > expiry:
+            reset_token.delete()
+            return Response({"detail": "Invalid or expired reset token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = reset_token.user
+        user.set_password(new_password)
+        user.must_change_password = False
+        user.save(update_fields=["password", "must_change_password"])
+
+        reset_token.used_at = timezone.now()
+        reset_token.save(update_fields=["used_at"])
+
+        return Response({"detail": "Password reset successfully."}, status=status.HTTP_200_OK)
 
 
 class UserVoicemailBoxView(APIView):
