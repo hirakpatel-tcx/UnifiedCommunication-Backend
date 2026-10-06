@@ -90,13 +90,14 @@ class CallRecordingListView(APIView):
         params = dict(request.query_params)
         params = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in params.items()}
 
-        # For logs-type requests, pass params as-is — no extension injection.
-        # For other types, if no extension was supplied, default to the
-        # requesting user's own extension.
-        if params.get("type") != "logs" and not params.get("ext"):
+        # logs/log type is unrestricted — pass params as-is.
+        # All other requests are locked to the requesting user's own extension
+        # regardless of role; any explicit ext param from the client is ignored.
+        req_type = (params.get("type") or "").lower()
+        if req_type not in ("logs", "log"):
             user_ext = getattr(request.user, "extension", None)
-            if user_ext and user_ext.extension_number:
-                params["ext"] = user_ext.extension_number
+            own_ext = user_ext.extension_number if user_ext else None
+            params["ext"] = own_ext or ""
 
         raw_extension = params.get("ext", "")
         extensions = [e.strip() for e in raw_extension.split(",") if e.strip()]
