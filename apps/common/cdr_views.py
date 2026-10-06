@@ -19,6 +19,38 @@ from rest_framework.views import APIView
 from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.tl_scoping import resolve_tl_extensions
 from apps.contacts.services import annotate_contact_flags
+from apps.extensions.models import Extension
+
+
+def _build_extension_label_map(tenant) -> dict:
+    """
+    Returns a dict mapping extension_number → "First Last (ext)" for every
+    extension in the tenant that has a user assigned. Extensions with no user
+    are omitted — the raw number is used as-is in that case.
+    """
+    exts = (
+        Extension.objects.filter(tenant=tenant)
+        .select_related("user")
+        .exclude(user__isnull=True)
+        .only("extension_number", "user__first_name", "user__last_name")
+    )
+    label_map = {}
+    for ext in exts:
+        user = ext.user
+        full_name = f"{user.first_name} {user.last_name}".strip()
+        if full_name:
+            label_map[ext.extension_number] = f"{full_name} ({ext.extension_number})"
+    return label_map
+
+
+def _annotate_extension_labels(records: list, label_map: dict) -> None:
+    """
+    Adds an `extension_label` field to each CDR record in-place.
+    Falls back to the raw extension number when no label is found.
+    """
+    for record in records:
+        ext = record.get("extension", "")
+        record["extension_label"] = label_map.get(ext, ext)
 
 
 def _cdr_counterparty_field(record: dict) -> str:
@@ -61,6 +93,8 @@ def _annotate_cdr_response(tenant, response: Response) -> Response:
 
     if records:
         annotate_contact_flags(tenant, records, _cdr_counterparty_field)
+        label_map = _build_extension_label_map(tenant)
+        _annotate_extension_labels(records, label_map)
 
     return response
 
