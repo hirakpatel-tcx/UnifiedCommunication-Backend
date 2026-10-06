@@ -161,17 +161,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_features(self, obj) -> dict:
-        if obj.tenant and hasattr(obj.tenant, "features"):
-            return {
-                k: v
-                for k, v in obj.tenant.features.items()
-                if k != "voicemail"
-            }
-        return {
-            "calling": False,
-            "messaging": False,
-            "fax": False,
-        }
+        return obj.effective_features
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,44 @@ which call FreeSWITCH to confirm tenant ownership before writing to the JSON fie
 
 from django.core.exceptions import ValidationError
 
+from apps.tenants.models import VALID_FEATURE_KEYS
+
+
+# ---------------------------------------------------------------------------
+# features
+# ---------------------------------------------------------------------------
+
+def validate_user_features(value: dict) -> None:
+    """
+    Validates the structure of User.features.
+
+    Rules:
+    - Must be a dict.
+    - Keys must be a subset of VALID_FEATURE_KEYS (calling, messaging, fax).
+    - Values must be booleans.
+    - Empty dict is valid (means inherit everything from tenant).
+    """
+    if not isinstance(value, dict):
+        raise ValidationError(
+            "features must be a JSON object.",
+            code="features_not_dict",
+        )
+
+    unknown_keys = set(value.keys()) - VALID_FEATURE_KEYS
+    if unknown_keys:
+        raise ValidationError(
+            f"features contains unknown keys: {sorted(unknown_keys)}. "
+            f"Valid keys are: {sorted(VALID_FEATURE_KEYS)}.",
+            code="features_unknown_keys",
+        )
+
+    for key, val in value.items():
+        if not isinstance(val, bool):
+            raise ValidationError(
+                f"features.{key} must be a boolean, got {type(val).__name__}.",
+                code="features_invalid_value",
+            )
+
 
 # ---------------------------------------------------------------------------
 # fax_boxes

@@ -33,7 +33,7 @@ from django.db import models
 from apps.common.models import UUIDModel
 
 from .managers import UserManager
-from .validators import validate_fax_boxes, validate_voicemail_boxes
+from .validators import validate_fax_boxes, validate_user_features, validate_voicemail_boxes
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +199,27 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
 
     # ------------------------------------------------------------------
+    # Per-user feature overrides (JSON)
+    # Keys: "calling", "messaging", "fax" — same as Tenant.features.
+    # Empty dict (default) means inherit everything from the tenant.
+    # A key set to False disables that feature for this user even if the
+    # tenant has it enabled. The tenant is always the ceiling: a key set
+    # to True here cannot enable a feature the tenant has disabled.
+    # ------------------------------------------------------------------
+    features = models.JSONField(
+        default=dict,
+        blank=True,
+        validators=[validate_user_features],
+        help_text=(
+            "Per-user feature overrides. "
+            "Keys: 'calling', 'messaging', 'fax'. "
+            "Empty dict (default) inherits from tenant. "
+            "Set a key to False to disable for this user; "
+            "True cannot exceed what the tenant allows."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # VoicemailBox assignment (JSON)
     # Exact structure: [101, 1001]
     # Multiple users can share the same voicemail_box_id.
@@ -291,6 +312,30 @@ class User(AbstractBaseUser, PermissionsMixin):
     def has_fax_box(self, fax_uuid: str) -> bool:
         """Return True if the given fax_uuid is assigned to this user."""
         return fax_uuid in self.get_fax_uuids()
+
+    # ------------------------------------------------------------------
+    # Feature helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def effective_features(self) -> dict:
+        """
+        Merge tenant-level features with per-user overrides.
+
+        - Tenant is the ceiling: a feature disabled at tenant level is always
+          disabled for the user, regardless of the user override.
+        - If user.features is empty, the tenant values are returned as-is.
+        """
+        tenant_features = {}
+        if self.tenant and self.tenant.features:
+            tenant_features = {k: v for k, v in self.tenant.features.items() if k != "voicemail"}
+
+        user_overrides = self.features or {}
+
+        return {
+            key: tenant_features.get(key, False) and user_overrides.get(key, True)
+            for key in ("calling", "messaging", "fax")
+        }
 
     # ------------------------------------------------------------------
     # VoicemailBox helpers
