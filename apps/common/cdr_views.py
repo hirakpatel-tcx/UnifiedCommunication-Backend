@@ -32,14 +32,16 @@ def _build_extension_label_map(tenant) -> dict:
         Extension.objects.filter(tenant=tenant)
         .select_related("user")
         .exclude(user__isnull=True)
-        .only("extension_number", "user__first_name", "user__last_name")
+        .only("extension_number", "sip_username", "user__first_name", "user__last_name")
     )
     label_map = {}
     for ext in exts:
         user = ext.user
         full_name = f"{user.first_name} {user.last_name}".strip()
         if full_name:
-            label_map[ext.extension_number] = f"{full_name} ({ext.extension_number})"
+            label = f"{full_name} ({ext.extension_number})"
+            label_map[ext.extension_number] = label
+            label_map[ext.sip_username] = label
     return label_map
 
 
