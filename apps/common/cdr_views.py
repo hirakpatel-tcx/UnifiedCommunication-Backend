@@ -503,6 +503,29 @@ class CDRActiveExtensionsView(APIView):
         )
 
 
+class CDRActiveCallsView(APIView):
+    """
+    GET /api/v1/cdr/active-calls/
+    Live snapshot of calls in progress right now for the tenant, proxied
+    straight from tcxconnect's client_api `calls/` endpoint (no params,
+    no caching — the upstream queries FreeSWITCH's live channel list on
+    every call, so this is always current).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        feat_err = _validate_calling_feature(tenant)
+        if feat_err:
+            return feat_err
+
+        return FreeSwitchClientService.proxy_request(
+            tenant=tenant,
+            method="GET",
+            endpoint_path="calls/",
+        )
+
+
 class CDRDashboardView(APIView):
     """
     GET /api/v1/cdr/dashboard/
@@ -582,7 +605,6 @@ class CDRDashboardView(APIView):
                 return {"error": "Upstream error for all requested extensions."}
             return merge_fn(payloads)
 
-        hourly_params = {"date": end.split("T")[0], "utc_offset": utc_offset}
 
         with ThreadPoolExecutor(max_workers=4) as executor:
             summary_future = executor.submit(
@@ -592,7 +614,7 @@ class CDRDashboardView(APIView):
                 _fetch_section, "cdr/daily-summary/", {}, _merge_daily_summary
             )
             hourly_stats_future = executor.submit(
-                _fetch_section, "cdr/hourly-stats/", {"date": end.split("T")[0], "utc_offset": utc_offset}, _merge_hourly_stats
+                _fetch_section, "cdr/hourly-stats/", {"utc_offset": utc_offset}, _merge_hourly_stats
             )
 
             if extensions is None:
@@ -603,9 +625,24 @@ class CDRDashboardView(APIView):
             else:
                 top_extensions_future = None
 
+            # Live concurrent-call count — tenant-wide (the upstream has no
+            # per-extension filter), so it's fetched once regardless of the
+            # extension selection and reported as a simple count, not merged
+            # like the historical sections above.
+            active_calls_future = executor.submit(
+                FreeSwitchClientService.proxy_request,
+                tenant=tenant, method="GET", endpoint_path="calls/",
+            )
+
             summary = summary_future.result()
             daily_summary = daily_summary_future.result()
             hourly_stats = hourly_stats_future.result()
+
+            active_resp = active_calls_future.result()
+            if active_resp.status_code == status.HTTP_200_OK and isinstance(active_resp.data, dict):
+                active_calls_count = len(active_resp.data.get("calls") or [])
+            else:
+                active_calls_count = {"error": "Upstream error"}
 
             if top_extensions_future is not None:
                 resp = top_extensions_future.result()
@@ -627,6 +664,7 @@ class CDRDashboardView(APIView):
                 "daily_summary": daily_summary,
                 "top_extensions": top_extensions,
                 "hourly_stats": hourly_stats,
+                "active_calls_count": active_calls_count,
             },
             status=status.HTTP_200_OK,
         )
