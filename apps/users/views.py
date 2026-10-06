@@ -219,6 +219,17 @@ class UserListCreateView(generics.ListCreateAPIView):
                     | Q(tl_group_access__group__entries__did_id__in=did_ids)
                 ).distinct()
 
+        # Search filter: ?search=<term>
+        # Matches email, first name, last name, and extension number.
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(email__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(extension__extension_number__icontains=search)
+            ).distinct()
+
         # Active filter
         is_active = self.request.query_params.get("is_active")
         if is_active is not None:
