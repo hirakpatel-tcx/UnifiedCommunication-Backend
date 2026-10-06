@@ -328,7 +328,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
     - Voicemail boxes
     """
     password = serializers.CharField(write_only=True, required=False, style={"input_type": "password"})
-    must_change_password = serializers.BooleanField(required=False, default=True)
+    must_change_password = serializers.BooleanField(required=False)
     notify = serializers.BooleanField(write_only=True, required=False, default=False)
     generate_temp_password = serializers.BooleanField(write_only=True, required=False, default=False)
     tenant_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -440,6 +440,8 @@ class UserUpsertSerializer(serializers.ModelSerializer):
         validated_data.pop("notify", None)
         validated_data.pop("generate_temp_password", None)
 
+        if "must_change_password" not in validated_data:
+            validated_data["must_change_password"] = True
         is_temp_password = not raw_password
         if is_temp_password:
             raw_password = generate_temp_password()
