@@ -6,3 +6,6 @@ class ExtensionsConfig(AppConfig):
     name = "apps.extensions"
     label = "extensions"
     verbose_name = "Extensions"
+
+    def ready(self):
+        import apps.extensions.signals  # noqa: F401

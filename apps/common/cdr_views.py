@@ -16,42 +16,57 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django.core.cache import cache
+
 from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.tl_scoping import resolve_tl_extensions
 from apps.contacts.services import annotate_contact_flags
 from apps.extensions.models import Extension
 
+_EXT_LABEL_CACHE_TIMEOUT = 60 * 60 * 24  # 24 hours
+_EXT_LABEL_CACHE_KEY = "ext_label_map:{tenant_id}"
+
+
+def get_extension_label_map(tenant) -> dict:
+    key = _EXT_LABEL_CACHE_KEY.format(tenant_id=tenant.pk)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    label_map = _build_extension_label_map(tenant)
+    cache.set(key, label_map, _EXT_LABEL_CACHE_TIMEOUT)
+    return label_map
+
+
+def invalidate_extension_label_cache(tenant_id) -> None:
+    cache.delete(_EXT_LABEL_CACHE_KEY.format(tenant_id=tenant_id))
+
 
 def _build_extension_label_map(tenant) -> dict:
     """
-    Returns a dict mapping extension_number → "First Last (ext)" for every
-    extension in the tenant that has a user assigned. Extensions with no user
-    are omitted — the raw number is used as-is in that case.
+    Returns a dict mapping both extension_number and sip_username →
+    "First Last (ext)" for the tenant. One flat query, no ORM object overhead.
     """
-    exts = (
-        Extension.objects.filter(tenant=tenant)
-        .select_related("user")
-        .exclude(user__isnull=True)
-        .only("extension_number", "sip_username", "user__first_name", "user__last_name")
+    rows = (
+        Extension.objects.filter(tenant=tenant, user__isnull=False)
+        .values("extension_number", "sip_username", "user__first_name", "user__last_name")
     )
     label_map = {}
-    for ext in exts:
-        user = ext.user
-        full_name = f"{user.first_name} {user.last_name}".strip()
+    for row in rows:
+        full_name = f"{row['user__first_name']} {row['user__last_name']}".strip()
         if full_name:
-            label = f"{full_name} ({ext.extension_number})"
-            label_map[ext.extension_number] = label
-            label_map[ext.sip_username] = label
+            label = f"{full_name} ({row['extension_number']})"
+            label_map[row["extension_number"]] = label
+            label_map[row["sip_username"]] = label
     return label_map
 
 
 def _annotate_extension_labels(records: list, label_map: dict) -> None:
     """
     Adds an `extension_label` field to each CDR record in-place.
-    Falls back to the raw extension number when no label is found.
+    Falls back to the raw extension_number when no label is found.
     """
     for record in records:
-        ext = record.get("extension", "")
+        ext = record.get("extension_number") or record.get("extension") or ""
         record["extension_label"] = label_map.get(ext, ext)
 
 
@@ -95,8 +110,7 @@ def _annotate_cdr_response(tenant, response: Response) -> Response:
 
     if records:
         annotate_contact_flags(tenant, records, _cdr_counterparty_field)
-        label_map = _build_extension_label_map(tenant)
-        _annotate_extension_labels(records, label_map)
+        _annotate_extension_labels(records, get_extension_label_map(tenant))
 
     return response
 
