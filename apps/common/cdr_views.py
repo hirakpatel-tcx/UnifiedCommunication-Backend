@@ -29,16 +29,22 @@ _EXT_LABEL_CACHE_KEY = "ext_label_map:{tenant_id}"
 
 def get_extension_label_map(tenant) -> dict:
     key = _EXT_LABEL_CACHE_KEY.format(tenant_id=tenant.pk)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
-    label_map = _build_extension_label_map(tenant)
-    cache.set(key, label_map, _EXT_LABEL_CACHE_TIMEOUT)
-    return label_map
+    try:
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        label_map = _build_extension_label_map(tenant)
+        cache.set(key, label_map, _EXT_LABEL_CACHE_TIMEOUT)
+        return label_map
+    except Exception:
+        return _build_extension_label_map(tenant)
 
 
 def invalidate_extension_label_cache(tenant_id) -> None:
-    cache.delete(_EXT_LABEL_CACHE_KEY.format(tenant_id=tenant_id))
+    try:
+        cache.delete(_EXT_LABEL_CACHE_KEY.format(tenant_id=tenant_id))
+    except Exception:
+        pass
 
 
 def _build_extension_label_map(tenant) -> dict:
