@@ -64,7 +64,11 @@ class CallRecordingListView(APIView):
     """
     GET /api/v1/recordings/
     Lists call recordings.
-    Params: search, number, start, end, extension, page, page_size.
+    Params: search, number, start, end, extension, direction, page, page_size.
+
+    direction: "inbound", "outbound", or "local" — filters by the recorded
+    call's direction (forwarded as-is to tcxconnect; populated on each
+    recording via its linked CDR row, same as extension).
 
     extension: filters by the caller's extension — a single value ("101" or
     "101-TCX"), or a comma-separated list ("101,102,103") for multi-user /
@@ -93,13 +97,23 @@ class CallRecordingListView(APIView):
         # logs/log type is unrestricted — pass params as-is.
         # All other requests are locked to the requesting user's own extension
         # regardless of role; any explicit ext param from the client is ignored.
+        # tcxconnect's upstream endpoint reads `extension`, not `ext` — the
+        # param was being built under the wrong key, so this lock silently
+        # never applied to anyone (every request came back unfiltered).
         req_type = (params.get("type") or "").lower()
         if req_type not in ("logs", "log"):
             user_ext = getattr(request.user, "extension", None)
             own_ext = user_ext.extension_number if user_ext else None
-            params["ext"] = own_ext or ""
+            if not own_ext:
+                # No assigned extension (e.g. most superadmin accounts) — an
+                # empty `extension` param is treated upstream as "no filter",
+                # which would return every recording in the tenant instead of
+                # none. Short-circuit locally rather than rely on an upstream
+                # filter that was never designed for this case.
+                return Response({"count": 0, "next": None, "previous": None, "results": []})
+            params["extension"] = own_ext
 
-        raw_extension = params.get("ext", "")
+        raw_extension = params.get("extension", "")
         extensions = [e.strip() for e in raw_extension.split(",") if e.strip()]
 
         is_logs = params.get("type") == "logs"
@@ -122,7 +136,7 @@ class CallRecordingListView(APIView):
             return Response({"detail": "page and page_size must be integers."}, status=status.HTTP_400_BAD_REQUEST)
 
         def _fetch(ext):
-            call_params = {**params, "ext": ext, "page": 1, "page_size": MULTI_EXTENSION_FETCH_LIMIT}
+            call_params = {**params, "extension": ext, "page": 1, "page_size": MULTI_EXTENSION_FETCH_LIMIT}
             resp = FreeSwitchClientService.proxy_request(
                 tenant=tenant, method="GET", endpoint_path="call-recordings/", params=call_params,
             )
