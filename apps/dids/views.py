@@ -7,7 +7,7 @@ REST API views for DID listing and details.
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from apps.common.permissions import IsAdminOrSuperAdmin
+from apps.common.permissions import IsAdminOrSuperAdmin, IsSupervisorOrAdmin
 from apps.common.tenant_resolver import get_scoped_tenant
 from apps.common.tl_scoping import (
     resolve_tl_did_ids,
@@ -44,7 +44,7 @@ class DIDListView(generics.ListAPIView):
     For admin: automatically scoped to the user's tenant.
     """
     serializer_class = DIDSerializer
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsSupervisorOrAdmin]
 
     def get_queryset(self):
         tenant = get_scoped_tenant(self.request)
@@ -108,10 +108,9 @@ class DIDDetailView(generics.RetrieveAPIView):
     """
     GET /api/v1/dids/{id}/
     Retrieves single DID details.
-    Restricted to superadmin and admin roles.
     """
     serializer_class = DIDSerializer
-    permission_classes = [IsAdminOrSuperAdmin]
+    permission_classes = [IsSupervisorOrAdmin]
     lookup_field = "id"
 
     def get_queryset(self):
@@ -119,9 +118,11 @@ class DIDDetailView(generics.RetrieveAPIView):
         qs = DID.objects.select_related("tenant", "department", "account").prefetch_related("user_dids__user").all()
         if user.is_superuser or user.role == "superadmin":
             return qs
-        if user.tenant_id:
-            return qs.filter(tenant_id=user.tenant_id)
-        return qs.none()
+        qs = qs.filter(tenant_id=user.tenant_id) if user.tenant_id else qs.none()
+        tl_did_ids = resolve_tl_did_ids(user)
+        if tl_did_ids is not None:
+            qs = qs.filter(id__in=tl_did_ids)
+        return qs
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +137,11 @@ class DepartmentListCreateView(generics.ListCreateAPIView):
     For admin: automatically scoped to the user's tenant.
     """
     serializer_class = DepartmentSerializer
-    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsSupervisorOrAdmin()]
+        return [IsAdminOrSuperAdmin()]
 
     def get_queryset(self):
         tenant = get_scoped_tenant(self.request)

@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
-from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
+from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin, IsSupervisorOrAdmin
 from apps.common.services.secret_service import SecretService
 from apps.common.tl_scoping import resolve_tl_extensions
 from apps.dids.models import DID, AccessGroup, AccessGroupEntry, UserDID, TLGroupAccess
@@ -133,7 +133,11 @@ class UserListCreateView(generics.ListCreateAPIView):
     GET  /api/v1/users/ — List users with tenant filtering.
     POST /api/v1/users/ — Create user + extension + DIDs + fax + voicemail in one atomic API call.
     """
-    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsSupervisorOrAdmin()]
+        return [IsAdminOrSuperAdmin()]
 
     def get_serializer_class(self):
         if self.request.method == "POST":
