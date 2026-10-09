@@ -415,6 +415,40 @@ class EmailLog(UUIDModel):
 
 
 # ---------------------------------------------------------------------------
+# QR Login Token
+# ---------------------------------------------------------------------------
+
+class QRLoginStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    CONSUMED = "consumed", "Consumed"
+
+
+class QRLoginToken(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="qr_login_tokens",
+    )
+    status = models.CharField(
+        max_length=16, choices=QRLoginStatus.choices, default=QRLoginStatus.PENDING
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "qr_login_tokens"
+
+    def is_expired(self):
+        from django.utils import timezone
+        return timezone.now() >= self.expires_at
+
+
+# ---------------------------------------------------------------------------
 # Password Reset Token
 # ---------------------------------------------------------------------------
 

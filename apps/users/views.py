@@ -766,3 +766,121 @@ class UserReinviteView(APIView):
         del raw_password
 
         return Response({"status": "reinvited", "email": target_user.email}, status=status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# QR Login
+# ---------------------------------------------------------------------------
+
+_QR_TOKEN_EXPIRY_MINUTES = 5
+
+
+def _mint_jwt_for_user(user):
+    """Returns (access, refresh) JWT strings, same as LoginView."""
+    refresh = RefreshToken.for_user(user)
+    refresh["role"] = user.role
+    refresh["tenant_id"] = str(user.tenant_id) if user.tenant_id else None
+    return str(refresh.access_token), str(refresh)
+
+
+class QRLoginInitiateView(APIView):
+    """
+    POST /api/v1/auth/qr/initiate/
+    No auth required — called by the desktop before any session exists.
+    Returns a short-lived token the desktop renders as a QR code.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        from django.utils import timezone
+        from apps.users.models import QRLoginToken
+
+        token = secrets.token_urlsafe(32)
+        expires_at = timezone.now() + timezone.timedelta(minutes=_QR_TOKEN_EXPIRY_MINUTES)
+        QRLoginToken.objects.create(token=token, expires_at=expires_at)
+
+        return Response(
+            {"token": token, "expires_in": _QR_TOKEN_EXPIRY_MINUTES * 60},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class QRLoginConfirmView(APIView):
+    """
+    POST /api/v1/auth/qr/confirm/
+    Called by the authenticated mobile user after scanning the QR code.
+    Marks the token approved and binds the mobile user to it.
+    Body: { "token": "<qr token>" }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        from django.utils import timezone
+        from apps.users.models import QRLoginToken, QRLoginStatus
+
+        raw_token = request.data.get("token")
+        if not raw_token:
+            return Response({"detail": "token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            qr = QRLoginToken.objects.get(token=raw_token, status=QRLoginStatus.PENDING)
+        except QRLoginToken.DoesNotExist:
+            return Response({"detail": "Invalid or already used token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if qr.is_expired():
+            qr.delete()
+            return Response({"detail": "QR code has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+        qr.user = request.user
+        qr.status = QRLoginStatus.APPROVED
+        qr.save(update_fields=["user", "status"])
+
+        return Response({"detail": "QR login approved."}, status=status.HTTP_200_OK)
+
+
+class QRLoginStatusView(APIView):
+    """
+    GET /api/v1/auth/qr/status/?token=<token>
+    Polled by the desktop. On approved: returns a fresh JWT pair and marks
+    the token consumed. On pending: returns the current status so the desktop
+    keeps polling. On expired/invalid: returns 400.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        from apps.users.models import QRLoginToken, QRLoginStatus
+
+        raw_token = request.query_params.get("token")
+        if not raw_token:
+            return Response({"detail": "token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            qr = QRLoginToken.objects.select_related("user").get(token=raw_token)
+        except QRLoginToken.DoesNotExist:
+            return Response({"detail": "Invalid or expired token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if qr.status == QRLoginStatus.CONSUMED:
+            return Response({"detail": "Token already consumed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if qr.is_expired():
+            qr.delete()
+            return Response({"detail": "QR code has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if qr.status == QRLoginStatus.PENDING:
+            return Response({"status": "pending"}, status=status.HTTP_200_OK)
+
+        # APPROVED — mint JWT, mark consumed, return credentials.
+        user = qr.user
+        update_last_login(None, user)
+        access, refresh = _mint_jwt_for_user(user)
+
+        qr.status = QRLoginStatus.CONSUMED
+        qr.save(update_fields=["status"])
+
+        user_data = UserDetailSerializer(user).data
+        return Response(
+            {"status": "approved", "access": access, "refresh": refresh, "user": user_data},
+            status=status.HTTP_200_OK,
+        )

@@ -9,6 +9,9 @@ from apps.users.views import (
     LogoutView,
     ResetPasswordView,
     PermissionListView,
+    QRLoginConfirmView,
+    QRLoginInitiateView,
+    QRLoginStatusView,
     SipCredentialsView,
     UserDetailView,
     UserDIDView,
@@ -31,6 +34,9 @@ auth_urlpatterns = [
     path("change-password/", ChangePasswordView.as_view(), name="auth-change-password"),
     path("forgot-password/", ForgotPasswordView.as_view(), name="auth-forgot-password"),
     path("reset-password/", ResetPasswordView.as_view(), name="auth-reset-password"),
+    path("qr/initiate/", QRLoginInitiateView.as_view(), name="auth-qr-initiate"),
+    path("qr/confirm/", QRLoginConfirmView.as_view(), name="auth-qr-confirm"),
+    path("qr/status/", QRLoginStatusView.as_view(), name="auth-qr-status"),
 ]
 
 # User management endpoints: /api/v1/users/
