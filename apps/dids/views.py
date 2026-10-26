@@ -159,6 +159,25 @@ class DepartmentListCreateView(generics.ListCreateAPIView):
         if search:
             qs = qs.filter(name__icontains=search)
 
+        # Account filter (multi-select): ?account_id=1,2,3
+        # Returns departments that have at least one DID belonging to those accounts.
+        # If all matching DIDs have no department set, returns all departments
+        # (no meaningful constraint can be applied).
+        account_id = self.request.query_params.get("account_id")
+        if account_id:
+            account_ids = [a.strip() for a in account_id.split(",") if a.strip()]
+            if account_ids:
+                from apps.dids.models import DID as DIDModel
+                dept_ids = list(
+                    DIDModel.objects.filter(account_id__in=account_ids, department__isnull=False)
+                    .values_list("department_id", flat=True)
+                    .distinct()
+                )
+                if dept_ids:
+                    qs = qs.filter(id__in=dept_ids)
+                # else: all DIDs for this account are unassigned to a department —
+                # leave qs unfiltered so the user can still pick a department.
+
         return qs
 
 

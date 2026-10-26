@@ -210,6 +210,22 @@ class UserListCreateView(generics.ListCreateAPIView):
                     | Q(id__in=unrestricted_tl_ids)
                 ).distinct()
 
+        # Account filter (multi-select): ?account_id=1,2,3
+        # Matches users assigned to any DID belonging to those accounts.
+        account_id = self.request.query_params.get("account_id")
+        if account_id:
+            account_ids = [a.strip() for a in account_id.split(",") if a.strip()]
+            if account_ids:
+                qs = qs.filter(user_dids__did__account_id__in=account_ids).distinct()
+
+        # Department filter (multi-select): ?department_id=1,2,3
+        # Matches users assigned to any DID belonging to those departments.
+        department_id = self.request.query_params.get("department_id")
+        if department_id:
+            department_ids = [d.strip() for d in department_id.split(",") if d.strip()]
+            if department_ids:
+                qs = qs.filter(user_dids__did__department_id__in=department_ids).distinct()
+
         # DID filter (multi-select): ?did_id=1,2,3
         # Matches regular callers with that DID assigned (UserDID) and Team
         # Leads whose AccessGroup grant covers it, mirroring the
