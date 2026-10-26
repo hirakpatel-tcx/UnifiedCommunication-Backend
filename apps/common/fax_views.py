@@ -422,7 +422,11 @@ class FaxSendView(APIView):
 
         fax_uuid = request.data.get("fax_uuid")
         destination = request.data.get("destination_number") or request.data.get("destination")
-        uploaded_file = request.FILES.get("file") or request.FILES.get("document")
+        uploaded_file = (
+            request.FILES.get("file")
+            or request.FILES.get("document")
+            or request.FILES.get("attachment")
+        )
 
         if not fax_uuid:
             return Response({"fax_uuid": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
