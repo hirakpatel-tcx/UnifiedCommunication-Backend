@@ -16,7 +16,7 @@ from apps.common.services.secret_service import SecretService
 from apps.dids.models import DID, UserDID, Division, Department, UserDIDDivisionAssignment
 from apps.extensions.models import Extension
 from apps.tenants.models import Tenant
-from apps.users.models import User, UserRole
+from apps.users.models import User, UserRole, LoginPlatform
 from apps.users.utils import generate_temp_password
 from apps.users.validators import validate_fax_boxes, validate_voicemail_boxes
 
@@ -171,6 +171,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(required=True, write_only=True, style={"input_type": "password"})
+    platform = serializers.ChoiceField(choices=LoginPlatform.choices, required=True)
+    app_version = serializers.CharField(required=True, max_length=32)
 
     def validate(self, attrs):
         email = attrs.get("email", "").strip().lower()

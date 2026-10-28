@@ -468,3 +468,39 @@ class PasswordResetToken(models.Model):
 
     def __str__(self) -> str:
         return f"PasswordResetToken({self.user_id}, used={self.used_at is not None})"
+
+
+# ---------------------------------------------------------------------------
+# Login History (client app version tracking)
+# ---------------------------------------------------------------------------
+
+class LoginPlatform(models.TextChoices):
+    EXE = "exe", "Desktop (EXE)"
+    ANDROID = "android", "Android"
+    IOS = "ios", "iOS"
+
+
+class LoginHistory(models.Model):
+    """
+    One row per email/password login, recording which client app and
+    version the user logged in with.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="login_history",
+    )
+    platform = models.CharField(max_length=16, choices=LoginPlatform.choices)
+    app_version = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "login_history"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"LoginHistory({self.user_id}, {self.platform}={self.app_version})"

@@ -2,7 +2,7 @@ from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from apps.users.models import EmailLog, User
+from apps.users.models import EmailLog, LoginHistory, User
 from apps.extensions.models import Extension
 from apps.dids.models import UserDID, UserDIDDivisionAssignment
 
@@ -94,12 +94,24 @@ class EverLoggedInFilter(admin.SimpleListFilter):
         return queryset
 
 
+class LoginHistoryInline(admin.TabularInline):
+    model = LoginHistory
+    extra = 0
+    fields = ("platform", "app_version", "created_at")
+    readonly_fields = ("platform", "app_version", "created_at")
+    ordering = ("-created_at",)
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     form = UserFeaturesForm
-    list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "has_logged_in", "created_at")
+    list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "has_logged_in", "last_login_platform", "last_login_app_version", "created_at")
     list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant", EverLoggedInFilter)
-    inlines = [ExtensionInline, UserDIDInline, UserDIDDivisionAssignmentInline]
+    inlines = [ExtensionInline, UserDIDInline, UserDIDDivisionAssignmentInline, LoginHistoryInline]
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         ("Personal Info", {"fields": ("first_name", "last_name")}),
@@ -124,6 +136,12 @@ class UserAdmin(BaseUserAdmin):
     search_fields = ("email", "first_name", "last_name")
     ordering = ("email",)
 
+    def get_queryset(self, request):
+        from django.db.models import Prefetch
+        return super().get_queryset(request).prefetch_related(
+            Prefetch("login_history", queryset=LoginHistory.objects.order_by("-created_at"))
+        )
+
     @admin.display(description="Extension")
     def get_extension(self, obj):
         if hasattr(obj, "extension") and obj.extension:
@@ -133,6 +151,31 @@ class UserAdmin(BaseUserAdmin):
     @admin.display(description="Logged In?", boolean=True)
     def has_logged_in(self, obj):
         return obj.last_login is not None
+
+    @admin.display(description="Last Login Platform")
+    def last_login_platform(self, obj):
+        latest = obj.login_history.first()
+        return latest.get_platform_display() if latest else "-"
+
+    @admin.display(description="Last Login Version")
+    def last_login_app_version(self, obj):
+        latest = obj.login_history.first()
+        return latest.app_version if latest else "-"
+
+
+@admin.register(LoginHistory)
+class LoginHistoryAdmin(admin.ModelAdmin):
+    list_display = ("user", "platform", "app_version", "created_at")
+    list_filter = ("platform",)
+    search_fields = ("user__email",)
+    readonly_fields = [f.name for f in LoginHistory._meta.fields]
+    autocomplete_fields = ("user",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(EmailLog)

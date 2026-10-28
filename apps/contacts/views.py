@@ -49,13 +49,12 @@ class ContactListCreateView(generics.ListCreateAPIView):
             qs = qs.filter(tenant=user.tenant)
 
         # Scoping rules:
-        # - Superadmin sees all in scope.
-        # - Admin & User see: all Company contacts + their own Personal contacts.
-        if not (user.is_superuser or getattr(user, "role", "") == "superadmin"):
-            qs = qs.filter(
-                Q(directory_type=DirectoryType.COMPANY)
-                | Q(directory_type=DirectoryType.PERSONAL, owner=user)
-            )
+        # - Everyone, including superadmin, sees only their own Personal contacts.
+        # - Company contacts: superadmin sees all in scope, others see all in their tenant.
+        qs = qs.filter(
+            Q(directory_type=DirectoryType.COMPANY)
+            | Q(directory_type=DirectoryType.PERSONAL, owner=user)
+        )
 
         # Directory type filter (?directory_type=company | personal)
         dir_type = self.request.query_params.get("directory_type")
@@ -129,10 +128,12 @@ class ContactDetailView(generics.RetrieveUpdateDestroyAPIView):
         qs = Contact.objects.all()
 
         if not (user.is_superuser or getattr(user, "role", "") == "superadmin"):
-            qs = qs.filter(tenant=user.tenant).filter(
-                Q(directory_type=DirectoryType.COMPANY)
-                | Q(directory_type=DirectoryType.PERSONAL, owner=user)
-            )
+            qs = qs.filter(tenant=user.tenant)
+
+        qs = qs.filter(
+            Q(directory_type=DirectoryType.COMPANY)
+            | Q(directory_type=DirectoryType.PERSONAL, owner=user)
+        )
 
         return (
             qs.select_related("owner", "tenant", "created_by")

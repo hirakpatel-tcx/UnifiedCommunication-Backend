@@ -15,7 +15,7 @@ class IsContactOwnerOrCompanyAdmin(BasePermission):
       - Read: Any authenticated user in the same tenant.
       - Write/Delete: Only tenant Admins or SuperAdmins.
     - Personal Directory contacts:
-      - Read/Write/Delete: Only the owner of the contact (or SuperAdmin).
+      - Read/Write/Delete: Only the owner of the contact. Not even SuperAdmin.
     """
 
     def has_permission(self, request, view):
@@ -25,6 +25,10 @@ class IsContactOwnerOrCompanyAdmin(BasePermission):
         user = request.user
         if not (user and user.is_authenticated):
             return False
+
+        # Personal contacts: owner only, regardless of role.
+        if obj.directory_type == DirectoryType.PERSONAL:
+            return obj.owner_id == user.id
 
         if user.is_superuser:
             return True
@@ -39,9 +43,5 @@ class IsContactOwnerOrCompanyAdmin(BasePermission):
             if request.method in SAFE_METHODS:
                 return True
             return is_admin
-
-        # Personal contacts
-        if obj.directory_type == DirectoryType.PERSONAL:
-            return obj.owner_id == user.id
 
         return False

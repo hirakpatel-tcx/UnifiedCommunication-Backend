@@ -22,7 +22,7 @@ import secrets
 import string
 from django.utils import timezone
 
-from apps.users.models import User, PasswordResetToken
+from apps.users.models import User, PasswordResetToken, LoginHistory
 from apps.users.tasks import send_welcome_email, send_password_reset_email
 from apps.users.serializers import (
     ChangePasswordSerializer,
@@ -54,6 +54,12 @@ class LoginView(APIView):
 
         user = serializer.validated_data["user"]
         update_last_login(None, user)
+
+        LoginHistory.objects.create(
+            user=user,
+            platform=serializer.validated_data["platform"],
+            app_version=serializer.validated_data["app_version"],
+        )
 
         refresh = RefreshToken.for_user(user)
         refresh["role"] = user.role
