@@ -377,6 +377,18 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             if User.objects.filter(email=email).exclude(id=self.instance.id).exists():
                 raise serializers.ValidationError({"email": "A user with this email already exists."})
 
+        return self._validate_assignments(attrs)
+
+    def _validate_assignments(self, attrs):
+        """
+        Shared by this serializer and UserInviteSerializer.validate(), which
+        overrides validate() entirely (different password/email rules) but
+        must still resolve did_assignments/fax_boxes/voicemail_boxes the same
+        way — duplicating this block previously let it silently drift out of
+        sync (UserInviteSerializer's copy never resolved did_assignments,
+        so invited users with a division_id/department_id on a DID lost
+        that assignment on create).
+        """
         # Validate fax_boxes if supplied
         if "fax_boxes" in attrs and attrs["fax_boxes"] is not None:
             try:
@@ -655,27 +667,15 @@ class UserInviteSerializer(UserUpsertSerializer):
         ]
 
     def validate(self, attrs):
-        if not self.instance and not attrs.get("email"):
-            raise serializers.ValidationError({"email": "Email is required when creating a user."})
         if self.instance:
             raise serializers.ValidationError({"detail": "This endpoint only supports creating users."})
+        if not attrs.get("email"):
+            raise serializers.ValidationError({"email": "Email is required when creating a user."})
         email = attrs["email"].strip().lower()
         if User.objects.filter(email=email).exists():
             raise serializers.ValidationError({"email": "A user with this email already exists."})
 
-        if "fax_boxes" in attrs and attrs["fax_boxes"] is not None:
-            try:
-                validate_fax_boxes(attrs["fax_boxes"])
-            except DjangoValidationError as e:
-                raise serializers.ValidationError({"fax_boxes": e.messages})
-
-        if "voicemail_boxes" in attrs and attrs["voicemail_boxes"] is not None:
-            try:
-                validate_voicemail_boxes(attrs["voicemail_boxes"])
-            except DjangoValidationError as e:
-                raise serializers.ValidationError({"voicemail_boxes": e.messages})
-
-        return attrs
+        return self._validate_assignments(attrs)
 
 
 # ---------------------------------------------------------------------------

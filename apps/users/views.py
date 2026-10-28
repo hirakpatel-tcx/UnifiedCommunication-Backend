@@ -219,12 +219,20 @@ class UserListCreateView(generics.ListCreateAPIView):
                 qs = qs.filter(user_dids__did__account_id__in=account_ids).distinct()
 
         # Department filter (multi-select): ?department_id=1,2,3
-        # Matches users assigned to any DID belonging to those departments.
+        # Matches users assigned to any DID belonging to those departments
+        # (DID.department, for single-department lines) OR users whose own
+        # per-DID assignment declares that department (UserDIDDivisionAssignment,
+        # for lines shared across departments, e.g. Parcare/Perry Ave/Rockwell —
+        # DID.department is null there since no single department owns the
+        # line, so the assignment table is the only place that knows).
         department_id = self.request.query_params.get("department_id")
         if department_id:
             department_ids = [d.strip() for d in department_id.split(",") if d.strip()]
             if department_ids:
-                qs = qs.filter(user_dids__did__department_id__in=department_ids).distinct()
+                qs = qs.filter(
+                    Q(user_dids__did__department_id__in=department_ids)
+                    | Q(did_division_assignments__department_id__in=department_ids)
+                ).distinct()
 
         # DID filter (multi-select): ?did_id=1,2,3
         # Matches regular callers with that DID assigned (UserDID) and Team

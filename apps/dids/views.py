@@ -4,6 +4,7 @@ apps/dids/views.py
 REST API views for DID listing and details.
 """
 
+from django.db.models import Q
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -70,11 +71,19 @@ class DIDListView(generics.ListAPIView):
             qs = qs.filter(number__icontains=search)
 
         # Department filter (multi-select): ?department_id=1,2,3
+        # A DID matches either by its own department (single-department lines)
+        # or by any caller's per-DID assignment department (lines shared across
+        # departments, e.g. a DID worked under AR by one caller and EV by
+        # another — DID.department is null there since no single department
+        # owns it, so the assignment table is the only place that knows).
         department_id = self.request.query_params.get("department_id")
         if department_id:
             department_ids = [d.strip() for d in department_id.split(",") if d.strip()]
             if department_ids:
-                qs = qs.filter(department_id__in=department_ids)
+                qs = qs.filter(
+                    Q(department_id__in=department_ids) |
+                    Q(user_division_assignments__department_id__in=department_ids)
+                ).distinct()
 
         # Account filter (multi-select): ?account_id=1,2,3
         account_id = self.request.query_params.get("account_id")
