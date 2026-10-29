@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404
 
 import concurrent.futures
 
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 
 from apps.common.permissions import IsAdminOrSuperAdmin, IsSuperAdmin
 from apps.common.services.freeswitch_client import FreeSwitchClientService
@@ -183,6 +183,40 @@ def _enrich_rows_with_user(rows, tenant, key, lookup_field):
         row["extension_number"] = ext.extension_number if ext else None
 
 
+def _enrich_calls_with_user(calls, tenant):
+    """
+    Live-call rows don't reliably carry the internal extension in `extension`
+    (it can hold the external number); the caller's SIP username often shows
+    up in `cid_name` (e.g. "216-TCX"). Try each candidate field against both
+    sip_username and extension_number, and attach `user` + `extension_number`.
+    """
+    fields = ("extension", "cid_name", "cid_num", "dialed")
+    candidates = {str(c.get(f)) for c in calls for f in fields if c.get(f)}
+    if not candidates:
+        return
+    lookup = {}
+    for ext in Extension.objects.filter(tenant=tenant).filter(
+        Q(sip_username__in=candidates) | Q(extension_number__in=candidates)
+    ).select_related("user__tenant", "user__extension").prefetch_related(
+        "user__user_dids__did",
+        "user__did_division_assignments__division",
+        Prefetch(
+            "user__tl_group_access__group__entries",
+            queryset=AccessGroupEntry.objects.select_related("division"),
+            to_attr="_entries_cache",
+        ),
+        "user__tl_group_access__group",
+    ):
+        lookup[ext.sip_username] = ext
+        lookup.setdefault(ext.extension_number, ext)
+
+    for call in calls:
+        ext = next((lookup[str(call[f])] for f in fields if call.get(f) and str(call[f]) in lookup), None)
+        user = getattr(ext, "user", None) if ext else None
+        call["user"] = UserDetailSerializer(user).data if user else None
+        call["extension_number"] = ext.extension_number if ext else None
+
+
 def _build_busy_extension_numbers(tenant) -> set:
     """
     Returns the set of extension_numbers that are currently on an active call,
@@ -264,6 +298,6 @@ class ExtensionActiveCallsView(APIView):
 
         calls = _extract_list(response.data, "calls")
         if response.status_code == status.HTTP_200_OK and calls is not None:
-            _enrich_rows_with_user(calls, tenant, key="extension", lookup_field="sip_username")
+            _enrich_calls_with_user(calls, tenant)
 
         return response
