@@ -28,7 +28,7 @@ def annotate_fax_tags(tenant, records: list) -> list:
         return records
 
     tags = FaxTag.objects.filter(tenant=tenant, fax_file_uuid__in=uuids).select_related(
-        "assigned_to", "assigned_to__extension"
+        "assigned_to", "assigned_to__extension", "read_by", "read_by__extension"
     )
     lookup = {t.fax_file_uuid: t for t in tags}
 
@@ -51,5 +51,18 @@ def annotate_fax_tags(tenant, records: list) -> list:
             }
         else:
             record["assigned_to"] = None
+
+        reader = tag_obj.read_by if tag_obj else None
+        record["is_read"] = bool(tag_obj and tag_obj.read_at)
+        record["read_at"] = tag_obj.read_at.isoformat() if tag_obj and tag_obj.read_at else None
+        if reader:
+            reader_ext = getattr(reader, "extension", None)
+            record["read_by"] = {
+                "user_id": str(reader.id),
+                "name": f"{reader.first_name} {reader.last_name}".strip() or reader.email,
+                "extension_number": reader_ext.extension_number if reader_ext else None,
+            }
+        else:
+            record["read_by"] = None
 
     return records

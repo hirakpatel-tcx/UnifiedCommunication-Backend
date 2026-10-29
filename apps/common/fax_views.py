@@ -11,6 +11,7 @@ Enforces:
 """
 
 from typing import Optional
+from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -461,12 +462,24 @@ class FaxFileDownloadView(APIView):
         if feat_err:
             return feat_err
 
-        return FreeSwitchClientService.proxy_stream(
+        response = FreeSwitchClientService.proxy_stream(
             tenant=tenant,
             endpoint_path=f"fax/files/{fax_file_uuid}/download/",
             params=dict(request.query_params),
             default_content_type="application/pdf",
         )
+
+        # Viewing or downloading marks the fax read; the first reader is kept.
+        if response.status_code == 200:
+            fax_tag, _ = FaxTag.objects.get_or_create(
+                tenant=tenant, fax_file_uuid=str(fax_file_uuid)
+            )
+            if fax_tag.read_at is None:
+                fax_tag.read_by = request.user
+                fax_tag.read_at = timezone.now()
+                fax_tag.save(update_fields=["read_by", "read_at", "updated_at"])
+
+        return response
 
 
 class FaxSendView(APIView):

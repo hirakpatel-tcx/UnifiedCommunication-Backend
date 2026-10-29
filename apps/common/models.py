@@ -93,6 +93,15 @@ class FaxTag(TimestampedModel):
     status_updated_by = models.ForeignKey(
         "users.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
+    read_by = models.ForeignKey(
+        "users.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="First user to view or download this fax. Null read_at = unread.",
+    )
+    read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [

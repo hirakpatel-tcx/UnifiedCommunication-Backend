@@ -180,6 +180,7 @@ def _enrich_rows_with_user(rows, tenant, key, lookup_field):
         ext = extensions_by_value.get(row.get(key))
         user = getattr(ext, "user", None) if ext else None
         row["user"] = UserDetailSerializer(user).data if user else None
+        row["extension_number"] = ext.extension_number if ext else None
 
 
 def _build_busy_extension_numbers(tenant) -> set:
