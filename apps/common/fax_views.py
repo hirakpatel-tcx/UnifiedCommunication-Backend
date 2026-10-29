@@ -20,6 +20,7 @@ from apps.common.models import FaxTag, FaxTagStatus
 from apps.common.pagination import StandardPagination
 from apps.common.services.fax_tag_service import annotate_fax_tags
 from apps.common.services.freeswitch_client import FreeSwitchClientService
+from apps.common.tl_scoping import resolve_tl_extensions
 
 
 def _validate_fax_feature(tenant):
@@ -294,18 +295,75 @@ class FaxFileDetailView(APIView):
         )
 
 
+def _is_fax_admin(user) -> bool:
+    return bool(user.is_superuser or getattr(user, "role", "") in ("superadmin", "admin"))
+
+
+def _fax_assignable_users(request_user, tenant, fax_uuid=None):
+    """
+    Users a fax may be assigned to by request_user:
+    - admin/superadmin: every active tenant user holding the fax box.
+    - Team Lead: only those users who hold the fax box AND are within the TL's
+      TLGroupAccess scope (matched by extension number).
+    - anyone else: none (they can only assign to themselves).
+    fax_uuid narrows to users that hold that fax box; omitted = any fax box.
+    """
+    from apps.users.models import User
+
+    qs = User.objects.filter(tenant=tenant, is_active=True).select_related("extension")
+    if fax_uuid:
+        qs = qs.filter(fax_boxes__contains=[{"fax_uuid": str(fax_uuid)}])
+    else:
+        qs = qs.exclude(fax_boxes=[])
+
+    if _is_fax_admin(request_user):
+        return qs
+    if getattr(request_user, "is_team_lead", False):
+        extensions = resolve_tl_extensions(request_user) or set()
+        return qs.filter(extension__extension_number__in=extensions)
+    return qs.none()
+
+
+class FaxAssignableUsersView(APIView):
+    """
+    GET /api/v1/fax/assignable-users/?fax_uuid=<fax box uuid>
+    Users the caller may assign a fax of that fax box to (see _fax_assignable_users).
+    Plain users get an empty list — they can only assign a fax to themselves.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        feat_err = _validate_fax_feature(tenant)
+        if feat_err:
+            return feat_err
+
+        users = _fax_assignable_users(request.user, tenant, request.query_params.get("fax_uuid"))
+        results = []
+        for u in users.order_by("first_name", "last_name", "email"):
+            ext = getattr(u, "extension", None)
+            results.append({
+                "user_id": str(u.id),
+                "name": f"{u.first_name} {u.last_name}".strip() or u.email,
+                "extension_number": ext.extension_number if ext else None,
+            })
+        return Response(results, status=status.HTTP_200_OK)
+
+
 class FaxAssignmentView(APIView):
     """
     PATCH /api/v1/fax/files/{fax_file_uuid}/assignment/
     Body: {"assigned_to": "<user_id>"} and/or {"status": "pending"|"in_progress"|"completed"}
 
     Local triage workflow for medical fax review — FreeSWITCH has no concept
-    of this, so it's tracked here keyed by fax_file_uuid. Lets an admin
-    assign a pending fax to a specific user (shown as extension + name on
-    the fax listing) and track review status.
+    of this, so it's tracked here keyed by fax_file_uuid. Lets a user be
+    assigned a pending fax (shown as extension + name on the fax listing) and
+    tracks review status.
 
-    Permissions: admin/superadmin only for both fields — this is a triage
-    control, not something the assignee edits on their own.
+    Permissions:
+    - assigned_to: admin/superadmin → any tenant user; Team Lead → themselves or
+      a user in their TLGroupAccess scope; any other user → themselves only.
+    - status: admin/superadmin only.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -316,9 +374,11 @@ class FaxAssignmentView(APIView):
             return feat_err
 
         user = request.user
-        if not (user.is_superuser or getattr(user, "role", "") in ("superadmin", "admin")):
+        is_admin = _is_fax_admin(user)
+
+        if request.data.get("status") is not None and not is_admin:
             return Response(
-                {"detail": "Only admins can assign faxes or change review status."},
+                {"detail": "Only admins can change review status."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -335,6 +395,13 @@ class FaxAssignmentView(APIView):
         if assigned_to_id is not None:
             from apps.users.models import User
             assignee = User.objects.filter(id=assigned_to_id, tenant=tenant).first()
+            if assignee and not is_admin and assignee.id != user.id:
+                allowed = _fax_assignable_users(user, tenant).filter(id=assignee.id).exists()
+                if not allowed:
+                    return Response(
+                        {"detail": "You can only assign faxes to yourself or to users on your team."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
             if not assignee:
                 return Response(
                     {"assigned_to": ["User not found in this tenant."]},
