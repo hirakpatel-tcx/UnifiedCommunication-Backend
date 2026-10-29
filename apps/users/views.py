@@ -55,11 +55,14 @@ class LoginView(APIView):
         user = serializer.validated_data["user"]
         update_last_login(None, user)
 
-        LoginHistory.objects.create(
-            user=user,
-            platform=serializer.validated_data["platform"],
-            app_version=serializer.validated_data["app_version"],
-        )
+        platform = serializer.validated_data.get("platform")
+        app_version = serializer.validated_data.get("app_version")
+        if platform and app_version:
+            LoginHistory.objects.create(
+                user=user,
+                platform=platform,
+                app_version=app_version,
+            )
 
         refresh = RefreshToken.for_user(user)
         refresh["role"] = user.role

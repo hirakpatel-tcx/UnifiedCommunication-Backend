@@ -171,8 +171,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(required=True, write_only=True, style={"input_type": "password"})
-    platform = serializers.ChoiceField(choices=LoginPlatform.choices, required=True)
-    app_version = serializers.CharField(required=True, max_length=32)
+    platform = serializers.ChoiceField(choices=LoginPlatform.choices, required=False)
+    app_version = serializers.CharField(required=False, max_length=32, allow_blank=True)
 
     def validate(self, attrs):
         email = attrs.get("email", "").strip().lower()

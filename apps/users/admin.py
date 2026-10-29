@@ -106,11 +106,38 @@ class LoginHistoryInline(admin.TabularInline):
         return False
 
 
+class LastLoginVersionFilter(admin.SimpleListFilter):
+    title = "last login version"
+    parameter_name = "last_login_version"
+
+    def lookups(self, request, model_admin):
+        versions = (
+            LoginHistory.objects.order_by("app_version")
+            .values_list("app_version", flat=True)
+            .distinct()
+        )
+        return [(v, v) for v in versions]
+
+    def queryset(self, request, queryset):
+        if not self.value():
+            return queryset
+        latest_ids = (
+            LoginHistory.objects.filter(user_id__in=queryset.values_list("id", flat=True))
+            .order_by("user_id", "-created_at")
+            .distinct("user_id")
+            .values_list("id", flat=True)
+        )
+        matching_user_ids = LoginHistory.objects.filter(
+            id__in=latest_ids, app_version=self.value()
+        ).values_list("user_id", flat=True)
+        return queryset.filter(id__in=matching_user_ids)
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     form = UserFeaturesForm
     list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "has_logged_in", "last_login_platform", "last_login_app_version", "created_at")
-    list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant", EverLoggedInFilter)
+    list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant", EverLoggedInFilter, "login_history__platform", LastLoginVersionFilter)
     inlines = [ExtensionInline, UserDIDInline, UserDIDDivisionAssignmentInline, LoginHistoryInline]
     fieldsets = (
         (None, {"fields": ("email", "password")}),
