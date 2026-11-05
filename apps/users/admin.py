@@ -1,9 +1,12 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserCreationForm
+from django.db.models import Q
 
 from apps.users.models import EmailLog, LoginHistory, User
+from apps.users.tasks import send_welcome_email
+from apps.users.utils import generate_temp_password
 from apps.extensions.models import Extension
 from apps.dids.models import UserDID, UserDIDDivisionAssignment
 
@@ -15,13 +18,7 @@ _FEATURE_CHOICES = [
 ]
 
 
-class UserCreationFormForCustomUser(UserCreationForm):
-    class Meta(UserCreationForm.Meta):
-        model = User
-        fields = ("email",)
-
-
-class UserFeaturesForm(forms.ModelForm):
+class UserFeaturesFormMixin(forms.ModelForm):
     feature_calling = forms.ChoiceField(
         choices=_FEATURE_CHOICES, required=False, label="Calling",
         help_text="Inherit = use tenant setting.",
@@ -34,10 +31,10 @@ class UserFeaturesForm(forms.ModelForm):
         choices=_FEATURE_CHOICES, required=False, label="Fax",
         help_text="Inherit = use tenant setting.",
     )
-
-    class Meta:
-        model = User
-        fields = "__all__"
+    assign_extension = forms.ModelChoiceField(
+        queryset=Extension.objects.none(), required=False, label="Extension",
+        help_text="Unassigned extensions (searchable). Leave blank to keep the current assignment.",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -49,8 +46,21 @@ class UserFeaturesForm(forms.ModelForm):
             else:
                 self.fields[field_name].initial = _INHERIT
 
+        # Candidates: any unassigned extension, plus the one already assigned
+        # to this user (so it shows as selected instead of disappearing).
+        # Scoped via autocomplete_fields (search, not a pre-rendered <select>),
+        # so it doesn't need to filter by tenant before the field is usable.
+        current_ext = getattr(self.instance, "extension", None) if self.instance.pk else None
+        qs = Extension.objects.filter(Q(user__isnull=True) | Q(pk=current_ext.pk if current_ext else None))
+        self.fields["assign_extension"].queryset = qs.order_by("tenant_id", "extension_number")
+        if current_ext:
+            self.fields["assign_extension"].initial = current_ext.pk
+
     def save(self, commit=True):
-        instance = super().save(commit=False)
+        # Call ModelForm.save directly (not super()) so this mixin never runs
+        # through UserCreationForm.save, which expects password1/password2
+        # fields that UserCreationFormForCustomUser removes.
+        instance = forms.ModelForm.save(self, commit=False)
         features = {}
         for key, field_name in (("calling", "feature_calling"), ("messaging", "feature_messaging"), ("fax", "feature_fax")):
             val = self.cleaned_data.get(field_name, _INHERIT)
@@ -62,14 +72,67 @@ class UserFeaturesForm(forms.ModelForm):
         instance.features = features
         if commit:
             instance.save()
+            self._save_extension_assignment(instance)
         return instance
+
+    def _save_extension_assignment(self, instance):
+        chosen = self.cleaned_data.get("assign_extension")
+        current = getattr(instance, "extension", None)
+        if chosen == current:
+            return
+        if current is not None:
+            current.user = None
+            current.save(update_fields=["user"])
+        if chosen is not None:
+            chosen.user = instance
+            chosen.save(update_fields=["user"])
+
+
+class UserCreationFormForCustomUser(UserFeaturesFormMixin, UserCreationForm):
+    """
+    Add-user form for the custom User model. No password fields are shown —
+    a temporary password is always generated on save (see UserAdmin.save_model)
+    and, when the admin clicks "Save and send invite email", mailed to the user.
+    """
+    password1 = None
+    password2 = None
+
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ("email",)
+
+    def clean_password2(self):
+        return None
+
+    def _post_clean(self):
+        # Skip UserCreationForm._post_clean's password1/password2 validation
+        # (those fields no longer exist on this form).
+        forms.ModelForm._post_clean(self)
+
+
+class UserFeaturesForm(UserFeaturesFormMixin):
+    class Meta:
+        model = User
+        fields = "__all__"
 
 
 class ExtensionInline(admin.StackedInline):
+    """
+    Read-only display of the extension currently assigned to this user.
+    Assignment itself happens via the "Extension" dropdown in the main form
+    (UserFeaturesFormMixin.assign_extension) so there is one place to change it.
+    """
     model = Extension
     extra = 0
+    max_num = 0
     fields = ("extension_number", "sip_username", "transport_type", "freeswitch_object_id")
-    readonly_fields = ("freeswitch_object_id",)
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class UserDIDInline(admin.TabularInline):
@@ -152,7 +215,7 @@ class UserAdmin(BaseUserAdmin):
         ("Personal Info", {"fields": ("first_name", "last_name")}),
         ("Tenant & Role", {"fields": ("tenant", "role", "is_team_lead", "sip_domain")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
-        ("Telephony Resources", {"fields": ("fax_boxes", "voicemail_boxes")}),
+        ("Telephony Resources", {"fields": ("assign_extension", "fax_boxes", "voicemail_boxes")}),
         ("Feature Overrides", {
             "fields": ("feature_calling", "feature_messaging", "feature_fax"),
             "description": "Per-user feature overrides. 'Inherit' uses the tenant setting. Tenant is the ceiling — enabling here cannot exceed what the tenant allows.",
@@ -164,12 +227,35 @@ class UserAdmin(BaseUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("email", "first_name", "last_name", "password1", "password2", "tenant", "role", "sip_domain", "feature_calling", "feature_messaging", "feature_fax", "is_staff", "is_superuser", "is_active"),
+                "fields": ("email", "first_name", "last_name", "tenant", "role", "sip_domain", "assign_extension", "feature_calling", "feature_messaging", "feature_fax", "is_staff", "is_superuser", "is_active"),
             },
         ),
     )
     search_fields = ("email", "first_name", "last_name")
     ordering = ("email",)
+    autocomplete_fields = ("assign_extension",)
+    change_form_template = "admin/users/user/change_form.html"
+    add_form_template = "admin/users/user/change_form.html"
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            # New user created from the admin: always provision a temp
+            # password, same as the API invite flow (apps.users.utils.generate_temp_password).
+            raw_password = generate_temp_password()
+            obj.set_password(raw_password)
+            obj.must_change_password = True
+            obj._plaintext_password = raw_password
+            obj._is_temp_password = True
+        super().save_model(request, obj, form, change)
+        if not change and "_saveandinvite" in request.POST:
+            send_welcome_email.delay(
+                email=obj.email,
+                plaintext_password=obj._plaintext_password,
+                is_temp_password=True,
+                first_name=obj.first_name,
+                user_id=obj.id,
+            )
+            messages.success(request, f"Invite email queued for {obj.email}.")
 
     def get_queryset(self, request):
         from django.db.models import Prefetch
