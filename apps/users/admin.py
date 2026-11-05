@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.forms import UserCreationForm
 
 from apps.users.models import EmailLog, LoginHistory, User
 from apps.extensions.models import Extension
@@ -12,6 +13,12 @@ _FEATURE_CHOICES = [
     ("true",   "True (enabled)"),
     ("false",  "False (disabled)"),
 ]
+
+
+class UserCreationFormForCustomUser(UserCreationForm):
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ("email",)
 
 
 class UserFeaturesForm(forms.ModelForm):
@@ -136,6 +143,7 @@ class LastLoginVersionFilter(admin.SimpleListFilter):
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     form = UserFeaturesForm
+    add_form = UserCreationFormForCustomUser
     list_display = ("email", "first_name", "last_name", "tenant", "role", "is_team_lead", "sip_domain", "get_extension", "is_staff", "is_superuser", "is_active", "has_logged_in", "last_login_platform", "last_login_app_version", "created_at")
     list_filter = ("role", "is_team_lead", "is_staff", "is_superuser", "is_active", "tenant", EverLoggedInFilter, "login_history__platform", LastLoginVersionFilter)
     inlines = [ExtensionInline, UserDIDInline, UserDIDDivisionAssignmentInline, LoginHistoryInline]
@@ -156,7 +164,7 @@ class UserAdmin(BaseUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("email", "first_name", "last_name", "password", "tenant", "role", "sip_domain", "feature_calling", "feature_messaging", "feature_fax", "is_staff", "is_superuser", "is_active"),
+                "fields": ("email", "first_name", "last_name", "password1", "password2", "tenant", "role", "sip_domain", "feature_calling", "feature_messaging", "feature_fax", "is_staff", "is_superuser", "is_active"),
             },
         ),
     )
