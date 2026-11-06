@@ -72,10 +72,15 @@ class UserFeaturesFormMixin(forms.ModelForm):
         instance.features = features
         if commit:
             instance.save()
-            self._save_extension_assignment(instance)
+            self.save_extension_assignment(instance)
         return instance
 
-    def _save_extension_assignment(self, instance):
+    def save_extension_assignment(self, instance):
+        # The Django admin always calls form.save(commit=False) and persists
+        # the instance itself via ModelAdmin.save_model — so this must also
+        # be invoked explicitly from there (UserAdmin.save_model) for the
+        # admin flow; the `if commit:` branch above only covers direct,
+        # non-admin callers of form.save(commit=True).
         chosen = self.cleaned_data.get("assign_extension")
         current = getattr(instance, "extension", None)
         if chosen == current:
@@ -247,6 +252,7 @@ class UserAdmin(BaseUserAdmin):
             obj._plaintext_password = raw_password
             obj._is_temp_password = True
         super().save_model(request, obj, form, change)
+        form.save_extension_assignment(obj)
         if not change and "_saveandinvite" in request.POST:
             send_welcome_email.delay(
                 email=obj.email,
@@ -256,6 +262,27 @@ class UserAdmin(BaseUserAdmin):
                 user_id=obj.id,
             )
             messages.success(request, f"Invite email queued for {obj.email}.")
+        elif change and "_resendinvite" in request.POST:
+            # Same eligibility rule and behavior as UserReinviteView
+            # (apps/users/views.py) — only for users still pending first
+            # login; an onboarded user must use password reset instead.
+            if not obj.is_first_login:
+                messages.error(request, "User has already logged in; use password reset instead of reinvite.")
+            elif not obj.is_active:
+                messages.error(request, "Cannot reinvite an inactive user.")
+            else:
+                raw_password = generate_temp_password()
+                obj.set_password(raw_password)
+                obj.must_change_password = True
+                obj.save(update_fields=["password", "must_change_password", "updated_at"])
+                send_welcome_email.delay(
+                    email=obj.email,
+                    plaintext_password=raw_password,
+                    is_temp_password=True,
+                    first_name=obj.first_name,
+                    user_id=obj.id,
+                )
+                messages.success(request, f"Invite email re-queued for {obj.email}.")
 
     def get_queryset(self, request):
         from django.db.models import Prefetch
