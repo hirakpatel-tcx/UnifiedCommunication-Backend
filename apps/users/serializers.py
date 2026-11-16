@@ -18,7 +18,7 @@ from apps.extensions.models import Extension
 from apps.tenants.models import Tenant
 from apps.users.models import User, UserRole, LoginPlatform
 from apps.users.utils import generate_temp_password
-from apps.users.validators import validate_fax_boxes, validate_voicemail_boxes
+from apps.users.validators import validate_fax_boxes, validate_user_features, validate_voicemail_boxes
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +112,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     extension = ExtensionSummarySerializer(read_only=True)
     dids = UserDIDSummarySerializer(source="user_dids", many=True, read_only=True)
     features = serializers.SerializerMethodField()
+    feature_overrides = serializers.SerializerMethodField()
     divisions = serializers.SerializerMethodField()
 
     class Meta:
@@ -126,6 +127,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
             "is_team_lead",
             "tenant",
             "features",
+            "feature_overrides",
             "extension",
             "dids",
             "divisions",
@@ -162,6 +164,10 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
     def get_features(self, obj) -> dict:
         return obj.effective_features
+
+    def get_feature_overrides(self, obj) -> dict:
+        """Raw per-user overrides (what the admin form shows). A missing key = inherit from tenant."""
+        return obj.features or {}
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +341,10 @@ class UserUpsertSerializer(serializers.ModelSerializer):
     generate_temp_password = serializers.BooleanField(write_only=True, required=False, default=False)
     tenant_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     sip_domain = serializers.CharField(required=False, allow_blank=True, default="")
+    # Per-user feature overrides, e.g. {"fax": false}. A missing key = inherit from the
+    # tenant (same as "Inherit" in the admin). Tenant is the ceiling. On PATCH the dict
+    # REPLACES the stored overrides, so send the full set; {} clears all overrides.
+    features = serializers.JSONField(required=False)
     extension_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     did_assignments = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
     fax_boxes = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
@@ -353,6 +363,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "sip_domain",
             "is_active",
             "is_team_lead",
+            "features",
             "must_change_password",
             "notify",
             "generate_temp_password",
@@ -363,6 +374,30 @@ class UserUpsertSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]
+
+    def validate_role(self, value):
+        """Only a platform superadmin may grant the superadmin role.
+
+        Applies to create, invite and PATCH (this serializer backs all three).
+        Re-sending an existing superadmin's unchanged role is allowed so that
+        editing other fields doesn't fail.
+        """
+        if value != UserRole.SUPERADMIN:
+            return value
+        request = self.context.get("request")
+        caller = getattr(request, "user", None)
+        if caller and (caller.is_superuser or getattr(caller, "role", "") == "superadmin"):
+            return value
+        if self.instance is not None and self.instance.role == UserRole.SUPERADMIN:
+            return value
+        raise serializers.ValidationError("Only a superadmin can assign the superadmin role.")
+
+    def validate_features(self, value):
+        try:
+            validate_user_features(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(e.messages)
+        return value
 
     def validate(self, attrs):
         # Email validation on create
@@ -453,6 +488,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
         raw_tenant = validated_data.pop("tenant_id", None)
         validated_data.pop("notify", None)
         validated_data.pop("generate_temp_password", None)
+        send_invite = validated_data.pop("send_invite", True)
 
         if "must_change_password" not in validated_data:
             validated_data["must_change_password"] = True
@@ -505,6 +541,7 @@ class UserUpsertSerializer(serializers.ModelSerializer):
         # welcome email, then discarded.
         user._plaintext_password = raw_password
         user._is_temp_password = is_temp_password
+        user._send_invite = send_invite
 
         # Handle Extension assignment
         if extension_ref is not None:
@@ -661,12 +698,15 @@ class UserInviteSerializer(UserUpsertSerializer):
     must_change_password = None
     notify = None
     generate_temp_password = None
+    # false = create the user without emailing the invite (the admin's plain "Save").
+    # The temp password is then unknown to everyone; use POST /users/{id}/reinvite/ later.
+    send_invite = serializers.BooleanField(write_only=True, required=False, default=True)
 
     class Meta(UserUpsertSerializer.Meta):
         fields = [
             f for f in UserUpsertSerializer.Meta.fields
             if f not in ("password", "must_change_password", "notify", "generate_temp_password")
-        ]
+        ] + ["send_invite"]
 
     def validate(self, attrs):
         if self.instance:

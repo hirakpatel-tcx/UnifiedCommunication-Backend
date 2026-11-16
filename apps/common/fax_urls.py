@@ -10,10 +10,13 @@ from apps.common.fax_views import (
     FaxAssignmentView,
     FaxBoxDetailView,
     FaxBoxListView,
+    FaxDashboardView,
     FaxFileCancelView,
     FaxFileDetailView,
     FaxFileDownloadView,
     FaxFileListView,
+    FaxMarkReadView,
+    FaxMarkUnreadView,
     FaxSendView,
 )
 
@@ -22,6 +25,8 @@ urlpatterns = [
     path("boxes/", FaxBoxListView.as_view(), name="fax-boxes-list"),
     path("boxes/<str:fax_uuid>/", FaxBoxDetailView.as_view(), name="fax-box-detail"),
 
+    path("dashboard/", FaxDashboardView.as_view(), name="fax-dashboard"),
+
     path("assignable-users/", FaxAssignableUsersView.as_view(), name="fax-assignable-users"),
 
     # Fax Transmissions / Files
@@ -29,6 +34,8 @@ urlpatterns = [
     path("files/<str:fax_file_uuid>/", FaxFileDetailView.as_view(), name="fax-file-detail"),
     path("files/<str:fax_file_uuid>/download/", FaxFileDownloadView.as_view(), name="fax-file-download"),
     path("files/<str:fax_file_uuid>/cancel/", FaxFileCancelView.as_view(), name="fax-file-cancel"),
+    path("files/<str:fax_file_uuid>/mark-read/", FaxMarkReadView.as_view(), name="fax-file-mark-read"),
+    path("files/<str:fax_file_uuid>/mark-unread/", FaxMarkUnreadView.as_view(), name="fax-file-mark-unread"),
     path("files/<str:fax_file_uuid>/assignment/", FaxAssignmentView.as_view(), name="fax-file-assignment"),
 
     # Outbound Fax Send (quick-send)

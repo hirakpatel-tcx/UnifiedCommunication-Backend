@@ -341,16 +341,19 @@ class UserInviteCreateView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
-        send_welcome_email.delay(
-            email=user.email,
-            plaintext_password=user._plaintext_password,
-            is_temp_password=True,
-            first_name=user.first_name,
-            user_id=user.id,
-        )
+        invite_sent = bool(getattr(user, "_send_invite", True))
+        if invite_sent:
+            send_welcome_email.delay(
+                email=user.email,
+                plaintext_password=user._plaintext_password,
+                is_temp_password=True,
+                first_name=user.first_name,
+                user_id=user.id,
+            )
 
         fresh_user = User.objects.select_related("tenant", "extension").prefetch_related("user_dids__did").get(id=user.id)
-        user_data = UserDetailSerializer(fresh_user).data
+        user_data = dict(UserDetailSerializer(fresh_user).data)
+        user_data["invite_sent"] = invite_sent
         return Response(user_data, status=status.HTTP_201_CREATED)
 
 

@@ -11,6 +11,7 @@ Enforces:
 """
 
 from typing import Optional
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -36,6 +37,8 @@ def _validate_fax_feature(tenant):
 def _get_scoped_fax_boxes_param(request, user) -> tuple[Optional[str], Optional[Response]]:
     user_boxes = [b.get("fax_uuid") for b in (user.fax_boxes or []) if b.get("fax_uuid")]
     requested_fax = request.query_params.get("fax")
+    if requested_fax and requested_fax.strip().lower() == "all":
+        requested_fax = None  # dropdown "All" = no box filter
 
     if not user.is_superuser and getattr(user, "role", "") == "user":
         if not user_boxes:
@@ -446,6 +449,117 @@ class FaxAssignmentView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class FaxDashboardView(APIView):
+    """
+    GET /api/v1/fax/dashboard/
+    Fax dashboard totals. Query: ?fax=<uuid>[,<uuid>] (narrowed to the user's boxes).
+
+    Totals (inbound/outbound/ongoing/failed) come from the PBX; read/unread comes
+    from local FaxTag (read_at set = read) because the PBX has no read concept.
+    unread = inbound_total - read, where read only counts FaxTags whose fax is a
+    currently-visible received fax (so deleted faxes and out-of-scope boxes can't skew it).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        feat_err = _validate_fax_feature(tenant)
+        if feat_err:
+            return feat_err
+
+        scoped_fax, err_resp = _get_scoped_fax_boxes_param(request, request.user)
+        if err_resp:
+            return err_resp
+
+        params = {"fax": scoped_fax} if scoped_fax else {}
+        counts_resp = FreeSwitchClientService.proxy_request(
+            tenant=tenant, method="GET", endpoint_path="fax/counts/", params=params,
+        )
+        if counts_resp.status_code != 200 or not isinstance(counts_resp.data, dict):
+            return counts_resp
+        counts = dict(counts_resp.data)
+
+        uuids_resp = FreeSwitchClientService.proxy_request(
+            tenant=tenant, method="GET", endpoint_path="fax/received-uuids/", params=params,
+        )
+        if uuids_resp.status_code != 200 or not isinstance(uuids_resp.data, dict):
+            return uuids_resp
+        uuids = [str(u) for u in uuids_resp.data.get("uuids", [])]
+        tags = FaxTag.objects.filter(tenant=tenant, fax_file_uuid__in=uuids) if uuids else FaxTag.objects.none()
+        agg = tags.aggregate(
+            read=Count("pk", filter=Q(read_at__isnull=False)),
+            assigned=Count("pk", filter=Q(assigned_to__isnull=False)),
+            in_progress=Count("pk", filter=Q(status=FaxTagStatus.IN_PROGRESS)),
+            completed=Count("pk", filter=Q(status=FaxTagStatus.COMPLETED)),
+        )
+        total = len(uuids)
+        read = agg["read"]
+        assigned = agg["assigned"]
+        in_progress = agg["in_progress"]
+        completed = agg["completed"]
+
+        counts["inbound_read"] = read
+        counts["inbound_unread"] = max(total - read, 0)
+        # Assignment (inbound faxes with an assigned user).
+        counts["inbound_assigned"] = assigned
+        counts["inbound_unassigned"] = max(total - assigned, 0)
+        # Review workflow. Faxes with no FaxTag row are "pending" by default.
+        counts["inbound_in_progress"] = in_progress
+        counts["inbound_completed"] = completed
+        counts["inbound_pending"] = max(total - in_progress - completed, 0)
+        return Response(counts, status=status.HTTP_200_OK)
+
+
+class _FaxReadStateView(APIView):
+    """Shared logic for mark-read / mark-unread."""
+    permission_classes = [permissions.IsAuthenticated]
+    mark_read = True
+
+    def post(self, request, fax_file_uuid, *args, **kwargs):
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        feat_err = _validate_fax_feature(tenant)
+        if feat_err:
+            return feat_err
+
+        # Confirms the fax exists in this tenant and lets us enforce fax-box scoping.
+        detail = FreeSwitchClientService.proxy_request(
+            tenant=tenant, method="GET", endpoint_path=f"fax/files/{fax_file_uuid}/",
+        )
+        if detail.status_code != 200 or not isinstance(detail.data, dict):
+            return detail
+        if not request.user.is_superuser and getattr(request.user, "role", "") == "user":
+            allowed = {b.get("fax_uuid") for b in (request.user.fax_boxes or [])}
+            if str(detail.data.get("fax")) not in allowed:
+                return Response(
+                    {"detail": "You do not have permission to access this fax."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        fax_tag, _ = FaxTag.objects.get_or_create(tenant=tenant, fax_file_uuid=str(fax_file_uuid))
+        if self.mark_read:
+            if fax_tag.read_at is None:
+                fax_tag.read_by = request.user
+                fax_tag.read_at = timezone.now()
+                fax_tag.save(update_fields=["read_by", "read_at", "updated_at"])
+        elif fax_tag.read_at is not None:
+            fax_tag.read_by = None
+            fax_tag.read_at = None
+            fax_tag.save(update_fields=["read_by", "read_at", "updated_at"])
+
+        annotate_fax_tags(tenant, [detail.data])
+        return Response(detail.data, status=status.HTTP_200_OK)
+
+
+class FaxMarkReadView(_FaxReadStateView):
+    """POST /api/v1/fax/files/{fax_file_uuid}/mark-read/"""
+    mark_read = True
+
+
+class FaxMarkUnreadView(_FaxReadStateView):
+    """POST /api/v1/fax/files/{fax_file_uuid}/mark-unread/"""
+    mark_read = False
 
 
 class FaxFileDownloadView(APIView):

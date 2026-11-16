@@ -622,6 +622,9 @@ The backend acts as an authenticated proxy for FreeSWITCH / Cloud PBX Client API
 | `/fax/files/{fax_file_uuid}/download/` | `GET` | Streams fax document directly as PDF (`application/pdf`). Optional `?attachment=true`. |
 | `/fax/send/` | `POST` | Queues outbound fax transmission. Multipart form-data: `fax_uuid`, `destination_number`, `file` (PDF). |
 | `/fax/files/{fax_file_uuid}/cancel/` | `POST` | Cancels active or queued outbound fax. |
+| `/fax/files/{fax_file_uuid}/mark-read/` | `POST` | Marks a fax read (first reader kept). Returns the annotated fax. |
+| `/fax/files/{fax_file_uuid}/mark-unread/` | `POST` | Marks a fax unread. |
+| `/fax/dashboard/` | `GET` | Dashboard totals: `inbound_total`, `outbound_total`, `ongoing`, `failed`, `inbound_read`, `inbound_unread`. Optional `?fax=`. |
 | `/fax/files/{fax_file_uuid}/` | `DELETE` | Deletes fax transmission record and PDF file. |
 
 ---

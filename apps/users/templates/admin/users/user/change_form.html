@@ -1,0 +1,14 @@
+{% extends "admin/change_form.html" %}
+
+{% block submit_buttons_bottom %}
+  {% if add %}
+    <div class="submit-row">
+      <input type="submit" value="Save and send invite email" name="_saveandinvite" class="default">
+    </div>
+  {% elif original.is_first_login and original.is_active %}
+    <div class="submit-row">
+      <input type="submit" value="Save and resend invite email" name="_resendinvite" class="default">
+    </div>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
