@@ -48,8 +48,8 @@ class UserFeaturesFormMixin(forms.ModelForm):
 
         # Candidates: any unassigned extension, plus the one already assigned
         # to this user (so it shows as selected instead of disappearing).
-        # Scoped via autocomplete_fields (search, not a pre-rendered <select>),
-        # so it doesn't need to filter by tenant before the field is usable.
+        # assign_extension is a custom form field (not a model field), so it cannot
+        # be listed in the admin's autocomplete_fields; it renders as a plain select.
         current_ext = getattr(self.instance, "extension", None) if self.instance.pk else None
         qs = Extension.objects.filter(Q(user__isnull=True) | Q(pk=current_ext.pk if current_ext else None))
         self.fields["assign_extension"].queryset = qs.order_by("tenant_id", "extension_number")
@@ -238,7 +238,6 @@ class UserAdmin(BaseUserAdmin):
     )
     search_fields = ("email", "first_name", "last_name")
     ordering = ("email",)
-    autocomplete_fields = ("assign_extension",)
     change_form_template = "admin/users/user/change_form.html"
     add_form_template = "admin/users/user/change_form.html"
 

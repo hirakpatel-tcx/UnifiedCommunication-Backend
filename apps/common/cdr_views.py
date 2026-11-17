@@ -9,6 +9,7 @@ Enforces:
 - Query parameter forwarding: forwards all analytics and filtering query params.
 """
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -24,7 +25,7 @@ from apps.contacts.services import annotate_contact_flags
 from apps.extensions.models import Extension
 
 _EXT_LABEL_CACHE_TIMEOUT = 60 * 60 * 24  # 24 hours
-_EXT_LABEL_CACHE_KEY = "ext_label_map:{tenant_id}"
+_EXT_LABEL_CACHE_KEY = "ext_label_map:v2:{tenant_id}"
 
 
 def get_extension_label_map(tenant) -> dict:
@@ -50,7 +51,7 @@ def invalidate_extension_label_cache(tenant_id) -> None:
 def _build_extension_label_map(tenant) -> dict:
     """
     Returns a dict mapping both extension_number and sip_username →
-    "First Last (ext)" for the tenant. One flat query, no ORM object overhead.
+    "First Last - ext" for the tenant. One flat query, no ORM object overhead.
     """
     rows = (
         Extension.objects.filter(tenant=tenant, user__isnull=False)
@@ -60,10 +61,13 @@ def _build_extension_label_map(tenant) -> dict:
     for row in rows:
         full_name = f"{row['user__first_name']} {row['user__last_name']}".strip()
         if full_name:
-            label = f"{full_name} ({row['extension_number']})"
+            label = f"{full_name} - {row['extension_number']}"
             label_map[row["extension_number"]] = label
             label_map[row["sip_username"]] = label
     return label_map
+
+
+_BARGE_CODE_RE = re.compile(r"^\*3[345](\d+)$")
 
 
 def _annotate_extension_labels(records: list, label_map: dict) -> None:
@@ -74,6 +78,17 @@ def _annotate_extension_labels(records: list, label_map: dict) -> None:
     for record in records:
         ext = record.get("extension_number") or record.get("extension") or ""
         record["extension_label"] = label_map.get(ext, ext)
+
+        # Supervisor monitoring calls (*33/*34/*35<ext>) should read "Barge 601",
+        # not the feature code. The raw destination_number is left untouched.
+        dest = record.get("destination_number") or ""
+        m = _BARGE_CODE_RE.match(dest)
+        if m:
+            target = m.group(1)
+            record["destination_display"] = f"Barge {target}"
+            record["barge_target_label"] = label_map.get(target, target)
+        else:
+            record["destination_display"] = dest
 
 
 def _cdr_counterparty_field(record: dict) -> str:

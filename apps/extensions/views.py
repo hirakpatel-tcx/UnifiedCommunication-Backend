@@ -11,6 +11,7 @@ from rest_framework.permissions import BasePermission
 from django.shortcuts import get_object_or_404
 
 import concurrent.futures
+import uuid
 
 from django.db.models import Prefetch, Q
 
@@ -301,3 +302,104 @@ class ExtensionActiveCallsView(APIView):
             _enrich_calls_with_user(calls, tenant)
 
         return response
+
+
+# ---------------------------------------------------------------------------
+# Call monitoring (barge) helpers
+# ---------------------------------------------------------------------------
+
+def _display_name(user) -> str:
+    return f"{user.first_name} {user.last_name}".strip() or user.email
+
+
+class ExtensionMonitorTargetsView(APIView):
+    """
+    GET /api/v1/extensions/monitor-targets/?search=<text>
+    Searchable list of the tenant's users with an extension and their presence
+    (online | online_busy | offline). Served from the presence cache with a
+    single DB query - no PBX round-trip - so it stays fast. Live changes arrive
+    over ws/events/ as `presence.snapshot` / `presence.update`.
+    """
+
+    def get(self, request, *args, **kwargs):
+        from apps.extensions.presence import get_presence
+
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        qs = Extension.objects.filter(
+            tenant=tenant, user__isnull=False, user__is_active=True,
+        ).exclude(user_id=request.user.pk).select_related("user")
+
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            qs = qs.filter(
+                Q(user__first_name__icontains=search)
+                | Q(user__last_name__icontains=search)
+                | Q(extension_number__icontains=search)
+            )
+
+        presence = get_presence(tenant.pk)
+        results = [
+            {
+                "user_id": str(ext.user_id),
+                "name": _display_name(ext.user),
+                "extension_number": ext.extension_number,
+                "status": presence.get(ext.extension_number, "offline"),
+            }
+            for ext in qs.order_by("user__first_name", "user__last_name")[:200]
+        ]
+        return Response({"results": results})
+
+
+class BargeRequestView(APIView):
+    """
+    POST /api/v1/extensions/barge-request/   {"user_id": "<uuid>"}
+    Pushes a `barge.request` event ({supervisor_ext, supervisor_name}) straight
+    to the target user's websocket group. Returns immediately; whether the
+    target is online is the client's concern (it has the presence feed).
+    """
+
+    def post(self, request, *args, **kwargs):
+        from apps.extensions.presence import get_presence, push_to_group
+        from apps.users.models import User
+
+        tenant = FreeSwitchClientService.get_target_tenant(request)
+        target_id = request.data.get("user_id")
+        if not target_id:
+            return Response({"detail": "user_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        caller_ext = getattr(request.user, "extension", None)
+        if not caller_ext:
+            return Response(
+                {"detail": "Your account has no extension assigned."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            target_uuid = uuid.UUID(str(target_id))
+        except ValueError:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        target = (
+            User.objects.select_related("extension")
+            .filter(pk=target_uuid, tenant=tenant, is_active=True)
+            .first()
+        )
+        if target is None:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not getattr(target, "extension", None):
+            return Response({"detail": "User has no extension."}, status=status.HTTP_400_BAD_REQUEST)
+        if target.pk == request.user.pk:
+            return Response({"detail": "You cannot barge yourself."}, status=status.HTTP_400_BAD_REQUEST)
+
+        push_to_group(
+            f"user.{target.pk}",
+            "outbox.event",
+            {
+                "event_type": "barge.request",
+                "payload": {
+                    "supervisor_ext": caller_ext.extension_number,
+                    "supervisor_name": _display_name(request.user),
+                },
+            },
+        )
+        status_now = get_presence(tenant.pk).get(target.extension.extension_number, "offline")
+        return Response({"sent": True, "target_status": status_now}, status=status.HTTP_202_ACCEPTED)

@@ -204,6 +204,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.outbox.tasks.dispatch_pending_outbox_events",
         "schedule": 2.0,
     },
+    # Extension presence (online/offline/busy) -> cache + websocket push.
+    "refresh-extension-presence": {
+        "task": "apps.extensions.tasks.refresh_extension_presence",
+        "schedule": 5.0,
+    },
 }
 
 # ---------------------------------------------------------------------------

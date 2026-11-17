@@ -1,5 +1,7 @@
 from django.urls import path
 from apps.extensions.views import (
+    BargeRequestView,
+    ExtensionMonitorTargetsView,
     ExtensionActiveCallsView,
     ExtensionDetailView,
     ExtensionListView,
@@ -10,6 +12,8 @@ from apps.extensions.views import (
 urlpatterns = [
     path("", ExtensionListView.as_view(), name="extension-list"),
     path("registrations/", ExtensionRegistrationsView.as_view(), name="extension-registrations"),
+    path("monitor-targets/", ExtensionMonitorTargetsView.as_view(), name="extension-monitor-targets"),
+    path("barge-request/", BargeRequestView.as_view(), name="extension-barge-request"),
     path("active-calls/", ExtensionActiveCallsView.as_view(), name="extension-active-calls"),
     path("<uuid:id>/", ExtensionDetailView.as_view(), name="extension-detail"),
     path("<uuid:id>/transport/", ExtensionTransportUpdateView.as_view(), name="extension-transport"),
