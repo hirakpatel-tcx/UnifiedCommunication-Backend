@@ -23,16 +23,18 @@ def get_scoped_tenant(request):
     - If tenant cannot be found or resolved, raises ValidationError.
     """
     user = request.user
+    body = getattr(request, "data", None)
+    body_tenant = body.get("tenant_id") if hasattr(body, "get") else None
     raw_tenant = (
         request.query_params.get("tenant_id")
         or request.headers.get("X-Tenant-ID")
-        or request.headers.get("x-tenant-id")
+        or body_tenant
     )
 
     if user.is_superuser or getattr(user, "role", "") == "superadmin":
         if not raw_tenant:
             raise ValidationError(
-                {"tenant_id": "tenant_id query parameter (or X-Tenant-ID header) is required for superadmin requests."}
+                {"tenant_id": "tenant_id (query parameter, request body, or X-Tenant-ID header) is required for superadmin requests."}
             )
 
         raw_str = str(raw_tenant).strip()
