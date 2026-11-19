@@ -321,6 +321,8 @@ class ExtensionMonitorTargetsView(APIView):
     over ws/events/ as `presence.snapshot` / `presence.update`.
     """
 
+    permission_classes = [IsSuperAdmin]  # Monitor / Barge is superadmin-only
+
     def get(self, request, *args, **kwargs):
         from apps.extensions.presence import get_presence
 
@@ -357,6 +359,8 @@ class BargeRequestView(APIView):
     to the target user's websocket group. Returns immediately; whether the
     target is online is the client's concern (it has the presence feed).
     """
+
+    permission_classes = [IsSuperAdmin]  # Monitor / Barge is superadmin-only
 
     def post(self, request, *args, **kwargs):
         from apps.extensions.presence import get_presence, push_to_group

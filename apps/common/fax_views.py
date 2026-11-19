@@ -128,6 +128,9 @@ class FaxBoxDetailView(APIView):
 
 _FAX_FETCH_ALL_PAGE_SIZE = 1000
 
+# Local FaxTag review workflow states accepted by ?review_status=.
+_REVIEW_STATUSES = {"pending", "in_progress", "completed"}
+
 
 def _fetch_all_fax_files(tenant, base_params: dict) -> Optional[list]:
     """
@@ -173,7 +176,9 @@ class FaxFileListView(APIView):
     Lists inbound and outbound fax transmissions.
     Query params: ?fax=...&status=received|sent|pending|failed&direction=inbound|outbound&search=...&page=...&page_size=...
     &assigned_to=me — filters to faxes locally assigned (via FaxTag) to the requesting user.
-    Filtering by assigned_to is local-only (FreeSWITCH has no concept of it), so this
+    &review_status=pending|in_progress|completed — local review workflow state (FaxTag).
+    &assignment=assigned|unassigned — whether the fax has a locally assigned user.
+    These filters are local-only (FreeSWITCH has no concept of it), so this
     endpoint fetches the full unfiltered result set from FreeSWITCH, filters it here, and
     paginates the filtered list itself — see docstring on _fetch_all_fax_files.
     """
@@ -190,9 +195,23 @@ class FaxFileListView(APIView):
             return err_resp
 
         assigned_to_me = request.query_params.get("assigned_to") == "me"
+        review_status = request.query_params.get("review_status") or None
+        assignment = request.query_params.get("assignment") or None
+        if review_status and review_status not in _REVIEW_STATUSES:
+            return Response(
+                {"review_status": [f"Must be one of: {', '.join(sorted(_REVIEW_STATUSES))}."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if assignment and assignment not in ("assigned", "unassigned"):
+            return Response(
+                {"assignment": ["Must be 'assigned' or 'unassigned'."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        has_local_filter = assigned_to_me or bool(review_status) or bool(assignment)
 
         params = dict(request.query_params)
-        params.pop("assigned_to", None)
+        for key in ("assigned_to", "review_status", "assignment"):
+            params.pop(key, None)
         params.pop("page", None)
         params.pop("page_size", None)
         params = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in params.items()}
@@ -200,7 +219,7 @@ class FaxFileListView(APIView):
         if scoped_fax:
             params["fax"] = scoped_fax
 
-        if not assigned_to_me:
+        if not has_local_filter:
             # No local-only filter requested: pass pagination straight through
             # to FreeSWITCH as before, no need to fetch everything.
             forward_params = dict(params)
@@ -231,10 +250,22 @@ class FaxFileListView(APIView):
             )
 
         annotate_fax_tags(tenant, all_records)
-        filtered = [
-            r for r in all_records
-            if (r.get("assigned_to") or {}).get("user_id") == str(request.user.id)
-        ]
+        user_id = str(request.user.id)
+
+        def keep(r: dict) -> bool:
+            assignee_id = (r.get("assigned_to") or {}).get("user_id")
+            if assigned_to_me and assignee_id != user_id:
+                return False
+            if assignment == "assigned" and not assignee_id:
+                return False
+            if assignment == "unassigned" and assignee_id:
+                return False
+            # annotate_fax_tags sets status="pending" for faxes with no FaxTag row.
+            if review_status and r.get("status") != review_status:
+                return False
+            return True
+
+        filtered = [r for r in all_records if keep(r)]
 
         export_all = request.query_params.get("export_all", "").lower() in ("true", "1", "yes") \
             or request.query_params.get("export", "").lower() in ("all", "true") \

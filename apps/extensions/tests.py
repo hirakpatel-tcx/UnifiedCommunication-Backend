@@ -18,9 +18,9 @@ LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"
 INMEM_LAYER = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
 
-def mk_user(tenant, email, first, last, ext_no=None):
+def mk_user(tenant, email, first, last, ext_no=None, role="user"):
     u = User.objects.create_user(
-        email=email, password="x", tenant=tenant, role="user", first_name=first, last_name=last,
+        email=email, password="x", tenant=tenant, role=role, first_name=first, last_name=last,
     )
     if ext_no:
         Extension.objects.create(
@@ -36,7 +36,8 @@ class BargeFlowTests(TestCase):
     def setUpTestData(cls):
         cls.t1 = Tenant.objects.create(freeswitch_tenant_uuid=uuid.uuid4(), tenant_code="T1", tenant_name="One")
         cls.t2 = Tenant.objects.create(freeswitch_tenant_uuid=uuid.uuid4(), tenant_code="T2", tenant_name="Two")
-        cls.sup = mk_user(cls.t1, "sup@x.com", "Sam", "Super", "102")
+        cls.sup = mk_user(cls.t1, "sup@x.com", "Sam", "Super", "102", role="superadmin")
+        cls.admin = mk_user(cls.t1, "adm@x.com", "Ada", "Admin", "103", role="admin")
         cls.agent = mk_user(cls.t1, "a@x.com", "Alice", "Agent", "601")
         cls.agent2 = mk_user(cls.t1, "b@x.com", "Bob", "Builder", "602")
         cls.alien = mk_user(cls.t2, "c@x.com", "Zed", "Other", "601")
@@ -45,13 +46,22 @@ class BargeFlowTests(TestCase):
         cache.clear()
         self.c = APIClient()
         self.c.force_authenticate(self.sup)
+        # Superadmins must name the tenant they act on (the app sends tenant_id).
+        self.c.credentials(HTTP_X_TENANT_ID=str(self.t1.pk))
+
+    def test_monitor_and_barge_are_superadmin_only(self):
+        for who in (self.admin, self.agent):
+            self.c.force_authenticate(who)
+            self.assertEqual(self.c.get("/api/v1/extensions/monitor-targets/").status_code, 403)
+            r = self.c.post("/api/v1/extensions/barge-request/", {"user_id": str(self.agent2.pk)}, format="json")
+            self.assertEqual(r.status_code, 403)
 
     def test_list_excludes_self_and_other_tenants_and_shows_presence(self):
         set_presence(self.t1.pk, {"601": "online", "602": "online_busy"})
         r = self.c.get("/api/v1/extensions/monitor-targets/")
         self.assertEqual(r.status_code, 200)
         by_ext = {x["extension_number"]: x for x in r.data["results"]}
-        self.assertEqual(set(by_ext), {"601", "602"})
+        self.assertEqual(set(by_ext), {"103", "601", "602"})
         self.assertEqual(by_ext["601"]["status"], "online")
         self.assertEqual(by_ext["602"]["status"], "online_busy")
         self.assertEqual(by_ext["601"]["name"], "Alice Agent")
