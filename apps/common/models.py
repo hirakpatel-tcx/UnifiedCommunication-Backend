@@ -102,6 +102,14 @@ class FaxTag(TimestampedModel):
         help_text="First user to view or download this fax. Null read_at = unread.",
     )
     read_at = models.DateTimeField(null=True, blank=True)
+    sent_by = models.ForeignKey(
+        "users.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="User who sent this outbound fax via quick-send (from JWT). Null for inbound faxes.",
+    )
 
     class Meta:
         constraints = [

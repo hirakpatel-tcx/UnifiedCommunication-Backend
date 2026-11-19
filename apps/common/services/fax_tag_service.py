@@ -28,7 +28,12 @@ def annotate_fax_tags(tenant, records: list) -> list:
         return records
 
     tags = FaxTag.objects.filter(tenant=tenant, fax_file_uuid__in=uuids).select_related(
-        "assigned_to", "assigned_to__extension", "read_by", "read_by__extension"
+        "assigned_to",
+        "assigned_to__extension",
+        "read_by",
+        "read_by__extension",
+        "sent_by",
+        "sent_by__extension",
     )
     lookup = {t.fax_file_uuid: t for t in tags}
 
@@ -65,4 +70,32 @@ def annotate_fax_tags(tenant, records: list) -> list:
         else:
             record["read_by"] = None
 
+        # sent_by only applies to outbound faxes; omit the key entirely for inbound.
+        if str(record.get("direction", "")).lower() == "outbound":
+            sender = tag_obj.sent_by if tag_obj else None
+            if sender:
+                sender_ext = getattr(sender, "extension", None)
+                record["sent_by"] = {
+                    "user_id": str(sender.id),
+                    "name": f"{sender.first_name} {sender.last_name}".strip() or sender.email,
+                    "extension_number": sender_ext.extension_number if sender_ext else None,
+                }
+            else:
+                record["sent_by"] = None
+
     return records
+
+
+def extract_fax_file_uuid(data):
+    """
+    Pulls the fax transmission UUID out of a FreeSWITCH response body,
+    tolerating it being top-level or nested under "data"/"fax_file".
+    """
+    if not isinstance(data, dict):
+        return None
+    for candidate in (data, data.get("data"), data.get("fax_file")):
+        if isinstance(candidate, dict):
+            uuid = _record_fax_file_uuid(candidate)
+            if uuid:
+                return str(uuid)
+    return None

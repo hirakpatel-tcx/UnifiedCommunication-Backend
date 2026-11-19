@@ -10,6 +10,7 @@ Enforces:
 - Direct PDF streaming: streams downloaded fax documents without buffering in RAM.
 """
 
+import logging
 from typing import Optional
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -20,9 +21,11 @@ from rest_framework.views import APIView
 
 from apps.common.models import FaxTag, FaxTagStatus
 from apps.common.pagination import StandardPagination
-from apps.common.services.fax_tag_service import annotate_fax_tags
+from apps.common.services.fax_tag_service import annotate_fax_tags, extract_fax_file_uuid
 from apps.common.services.freeswitch_client import FreeSwitchClientService
 from apps.common.tl_scoping import resolve_tl_extensions
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_fax_feature(tenant):
@@ -646,13 +649,36 @@ class FaxSendView(APIView):
             "file": (uploaded_file.name, uploaded_file.read(), uploaded_file.content_type or "application/pdf"),
         }
 
-        return FreeSwitchClientService.proxy_request(
+        resp = FreeSwitchClientService.proxy_request(
             tenant=tenant,
             method="POST",
             endpoint_path="fax/quick-send/",
             form_data=form_data,
             files=files,
         )
+
+        # Record the sender (from the JWT-authenticated request user) locally —
+        # FreeSWITCH only knows the fax box, not which user sent it.
+        if 200 <= resp.status_code < 300:
+            fax_file_uuid = extract_fax_file_uuid(resp.data)
+            if fax_file_uuid:
+                # Never fail the request here — the fax has already been sent.
+                try:
+                    FaxTag.objects.update_or_create(
+                        tenant=tenant,
+                        fax_file_uuid=fax_file_uuid,
+                        defaults={"sent_by": request.user},
+                    )
+                except Exception:
+                    logger.exception(
+                        "Fax %s sent but recording sent_by failed.", fax_file_uuid
+                    )
+            else:
+                logger.warning(
+                    "Fax quick-send succeeded but no fax_file_uuid in response; sender not recorded."
+                )
+
+        return resp
 
 
 class FaxFileCancelView(APIView):

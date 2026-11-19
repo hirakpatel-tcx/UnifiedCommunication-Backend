@@ -38,7 +38,9 @@ def compute_tenant_presence(tenant) -> dict | None:
         ext = row.get("extension")
         if not ext:
             continue
-        st = row.get("status") or "offline"
+        # The PBX client API reports a boolean `online`; older/other shapes may
+        # send a `status` string. Accept either.
+        st = row.get("status") or ("online" if row.get("online") else "offline")
         if st == "online" and ext in busy:
             st = "online_busy"
         mapping[ext] = st
