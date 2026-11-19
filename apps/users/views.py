@@ -26,6 +26,7 @@ from apps.users.models import User, PasswordResetToken, LoginHistory
 from apps.users.tasks import send_welcome_email, send_password_reset_email
 from apps.users.serializers import (
     ChangePasswordSerializer,
+    assignments_prefetch,
     ForgotPasswordSerializer,
     ResetPasswordSerializer,
     DIDAssignSerializer,
@@ -159,7 +160,7 @@ class UserListCreateView(generics.ListCreateAPIView):
             User.objects.select_related("tenant", "extension")
             .prefetch_related(
                 "user_dids__did",
-                "did_division_assignments__division",
+                assignments_prefetch(),
                 Prefetch(
                     "tl_group_access__group__entries",
                     queryset=AccessGroupEntry.objects.select_related("division"),

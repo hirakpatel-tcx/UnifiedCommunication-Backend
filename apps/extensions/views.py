@@ -22,7 +22,7 @@ from apps.common.tl_scoping import resolve_tl_extensions
 from apps.dids.models import AccessGroupEntry
 from apps.extensions.models import Extension
 from apps.extensions.serializers import ExtensionSerializer, ExtensionTransportUpdateSerializer
-from apps.users.serializers import UserDetailSerializer
+from apps.users.serializers import UserDetailSerializer, assignments_prefetch
 
 
 class IsSuperAdminOrReadOnlyAdmin(BasePermission):
@@ -168,7 +168,7 @@ def _enrich_rows_with_user(rows, tenant, key, lookup_field):
             tenant=tenant, **{f"{lookup_field}__in": values}
         ).select_related("user__tenant", "user__extension").prefetch_related(
             "user__user_dids__did",
-            "user__did_division_assignments__division",
+            assignments_prefetch("user__"),
             Prefetch(
                 "user__tl_group_access__group__entries",
                 queryset=AccessGroupEntry.objects.select_related("division"),
@@ -200,7 +200,7 @@ def _enrich_calls_with_user(calls, tenant):
         Q(sip_username__in=candidates) | Q(extension_number__in=candidates)
     ).select_related("user__tenant", "user__extension").prefetch_related(
         "user__user_dids__did",
-        "user__did_division_assignments__division",
+        assignments_prefetch("user__"),
         Prefetch(
             "user__tl_group_access__group__entries",
             queryset=AccessGroupEntry.objects.select_related("division"),

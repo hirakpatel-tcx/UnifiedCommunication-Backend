@@ -107,6 +107,21 @@ class TenantSummarySerializer(serializers.ModelSerializer):
         ]
 
 
+def assignments_prefetch(prefix: str = "") -> Prefetch:
+    """
+    One-query prefetch of a user's DID/division assignments with everything
+    UserDetailSerializer.divisions / .departments read, so serializing many
+    users never issues per-user queries. `prefix` is the path to the user
+    (e.g. "user__") when prefetching from a related model.
+    """
+    return Prefetch(
+        f"{prefix}did_division_assignments",
+        queryset=UserDIDDivisionAssignment.objects.select_related(
+            "division", "department", "did__department"
+        ),
+    )
+
+
 class UserDetailSerializer(serializers.ModelSerializer):
     tenant = TenantSummarySerializer(read_only=True)
     extension = ExtensionSummarySerializer(read_only=True)
@@ -114,6 +129,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
     features = serializers.SerializerMethodField()
     feature_overrides = serializers.SerializerMethodField()
     divisions = serializers.SerializerMethodField()
+    departments = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -131,6 +147,7 @@ class UserDetailSerializer(serializers.ModelSerializer):
             "extension",
             "dids",
             "divisions",
+            "departments",
             "fax_boxes",
             "voicemail_boxes",
             "is_first_login",
@@ -160,6 +177,22 @@ class UserDetailSerializer(serializers.ModelSerializer):
         return [
             {"id": division_id, "name": name}
             for division_id, name in sorted(divisions.items(), key=lambda item: item[1])
+        ]
+
+    def get_departments(self, obj) -> list:
+        """
+        Departments the user works under: the assignment's own department,
+        falling back to the DID's department. Deduplicated, sorted by name.
+        Reads only prefetched assignments (see assignments_prefetch).
+        """
+        departments = {}
+        for a in obj.did_division_assignments.all():
+            dept = a.department or a.did.department
+            if dept is not None:
+                departments[dept.id] = dept.name
+        return [
+            {"id": dept_id, "name": name}
+            for dept_id, name in sorted(departments.items(), key=lambda item: item[1])
         ]
 
     def get_features(self, obj) -> dict:
